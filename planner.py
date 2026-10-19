@@ -57,6 +57,7 @@ class Rules:
     min_density: float = 0.0
     min_incremental: float = 1.0
     max_sites: int = 30
+    import_batch_size: int = 2000
     reserve_planned: bool = True
     respect_site_present: bool = True
 
@@ -91,7 +92,8 @@ class Rules:
         if self.location_mode not in MODES:raise ValueError('Choose Area search, Supplied candidates or Grid centroid (legacy).')
         if not math.isfinite(self.search_spacing_m) or not 100<=self.search_spacing_m<=3000:
             raise ValueError('Search spacing must be between 100 and 3000 metres. It is not an accuracy claim.')
-        if not 1<=self.max_candidate_points<=1000000:raise ValueError('Maximum candidate alternatives must be 1–1,000,000.')
+        if not isinstance(self.max_candidate_points,int) or self.max_candidate_points<1:raise ValueError('Maximum candidate alternatives must be a positive integer.')
+        if not isinstance(self.import_batch_size,int) or not 100<=self.import_batch_size<=20000:raise ValueError('Import batch size must be 100–20,000 rows.')
         if not math.isfinite(self.distance_decay) or not 0<=self.distance_decay<=10:raise ValueError('Distance-decay strength must be 0–10.')
         if self.mode not in ('Population','MR preview'):
             raise ValueError('Choose Population or MR preview.')
@@ -109,8 +111,8 @@ class Rules:
                 raise ValueError(f'{key} must be a finite, non-negative number.')
         if self.service_radius_km <= 0 or self.service_radius_km > 100:
             raise ValueError('Service radius must be >0 and <=100 km.')
-        if self.max_sites < 1 or self.max_sites > 10000:
-            raise ValueError('Maximum sites must be between 1 and 10,000.')
+        if not isinstance(self.max_sites,int) or isinstance(self.max_sites,bool) or self.max_sites<1:
+            raise ValueError('Maximum sites must be a positive integer; there is no 10,000-site cap.')
         if self.red_weight <= 0 or self.amber_weight <= 0:
             raise ValueError('Red and Amber weights must be positive.')
         if self.mode == 'MR preview' and self.min_density:
@@ -193,6 +195,7 @@ class Plan:
 
 
 def plan_frames(raw, rules, mappings=None, log=print, cancelled=lambda:False):
+    """Small-fixture reference engine; desktop/CLI use database-backed run_paths."""
     rules.validate(); mappings=mappings or ALIASES
     source={k:canonical(v,k,mappings.get(k)) for k,v in raw.items() if v is not None and not k.startswith('_')}
     if not all(k in source for k in ('grid','airtel','competitor')):
@@ -343,36 +346,9 @@ def plan_frames(raw, rules, mappings=None, log=print, cancelled=lambda:False):
 
 
 def run_paths(paths,rules,mappings=None,log=print,cancelled=lambda:False,source_options=None):
-    from gis_io import read_source,match_mapping,normalize_role
-    from constraints import PolygonConstraints
-    rules.validate();options=source_options or {};effective={k:dict((mappings or {}).get(k,ALIASES[k])) for k in ALIASES}
-    raw={};polygons={};no_build=[];metadata={};messages=[]
-    for kind,path in paths.items():
-        if not path or kind in ('buildings','no_build_polygons'):continue
-        if kind not in ALIASES:raise ValueError('Unknown source role: '+kind)
-        opt=options.get(kind,{})
-        log(f'Reading {kind}: {Path(path).name}'+(' / '+opt['layer'] if opt.get('layer') else ''))
-        try:data=read_source(path,layer=opt.get('layer'),crs_override=opt.get('crs_override'),cancelled=cancelled)
-        except ValueError as exc:raise ValueError(f'{kind} source ({Path(path).name}): {exc} Building footprints must be selected in the Buildings source, which uses a disk index for large data.') from exc
-        mapping,notes=match_mapping(data.frame,kind,effective[kind],ALIASES[kind]);messages.extend(notes)
-        frame,mapping,geoms=normalize_role(data,kind,mapping,opt)
-        raw[kind]=frame;effective[kind]=mapping;metadata[kind]={**data.metadata,'mapping':mapping,'records':len(frame)}
-        if kind=='grid':
-            polygons={gid:geom for (country,gid,period,size),geom in geoms.items() if country==rules.country.upper() and period==rules.grid_period and size==rules.grid_size}
-        for note in notes:log(note)
-    if paths.get('no_build_polygons'):
-        opt=options.get('no_build_polygons',{});data=read_source(paths['no_build_polygons'],layer=opt.get('layer'),crs_override=opt.get('crs_override'),cancelled=cancelled)
-        if data.geometries is None or not len(data.geometries):raise ValueError('No-build polygons need a spatial polygon layer.')
-        no_build=list(data.geometries);metadata['no_build_polygons']=data.metadata
-    if polygons or no_build:raw['_constraints']=PolygonConstraints(country=rules.country,grid_geometries=polygons,no_build_geometries=no_build)
-    if paths.get('buildings'):
-        from buildings import load_buildings
-        opt=options.get('buildings',{});log('Loading open building footprints using the selected layer and CRS...')
-        raw['_buildings']=load_buildings(paths['buildings'],rules,cancelled,layer=opt.get('layer'),crs_override=opt.get('crs_override'),disk=rules.building_storage=='Disk index',log=log)
-        metadata['buildings']=raw['_buildings'].metadata
-    plan=plan_frames(raw,rules,effective,log,cancelled);plan.input_metadata=metadata
-    plan.summary['notes'].extend(messages)
-    return plan
+    from database_engine import run_database
+    return run_database(paths,rules,mappings,log,cancelled,source_options)
+
 
 
 def source_fingerprint(path):
@@ -397,6 +373,7 @@ def source_fingerprint(path):
 
 def save_plan(plan, root, paths=None):
     """Never overwrite a prior run; keep all provenance and settings with each result."""
+    if hasattr(plan,'export'):return plan.export(root,paths)
     folder=Path(root)/('plan_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
     folder.mkdir(parents=True,exist_ok=False)
     plan.sites.to_csv(folder/'proposed_sites.csv',index=False)
@@ -447,6 +424,8 @@ def main():
     ap.add_argument('--config',required=True,help='JSON with paths, rules, optional mappings and output_dir')
     ns=ap.parse_args();cfg=json.loads(Path(ns.config).read_text(encoding='utf-8'))
     result=run_paths(cfg['paths'],Rules(**cfg['rules']),cfg.get('mappings'),source_options=cfg.get('source_options'))
-    print(save_plan(result,cfg.get('output_dir','outputs'),cfg['paths']))
+    try:print(save_plan(result,cfg.get('output_dir','outputs'),cfg['paths']))
+    finally:
+        if hasattr(result,'close'):result.close()
 
 if __name__=='__main__':main()

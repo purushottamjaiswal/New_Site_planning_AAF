@@ -63,5 +63,9 @@
     }
   ],
   "callback_errors": [],
+  "large_results_rows": 10050,
+  "first_page_rows": 200,
+  "last_page_rows": 50,
+  "temporary_session_removed_on_close": true,
   "windows_interaction": "not tested"
 }

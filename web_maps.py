@@ -29,7 +29,7 @@ def map_data(plan):
       'competitors':feature_points(plan.competitors,'competitors'),
       'grids':{'type':'FeatureCollection','features':grid_features} if grid_features else feature_points(plan.grids[['id','lat','lon','category','town','assigned_candidate']],'grids'),
       'no_build':{'type':'FeatureCollection','features':no_build},
-      'buildings':{'type':'FeatureCollection','features':buildings.features[:20000] if buildings else []}},
+      'buildings':{'type':'FeatureCollection','features':buildings.features[:5000] if buildings else []}},
       'building_metadata':buildings.metadata if buildings else {},'building_total':len(buildings.features) if buildings else 0}
     return data
 
@@ -54,8 +54,8 @@ def write_earth(plan,path):
             point=ET.SubElement(pm,'Point');ET.SubElement(point,'altitudeMode').text='clampToGround';ET.SubElement(point,'coordinates').text=f"{row['lon']},{row['lat']},0"
     buildings=getattr(plan,'buildings_context',None)
     if buildings:
-        f=folder('Open building footprints — preview (maximum 20,000; full GeoJSON export supplied)')
-        for feat in buildings.features[:20000]:
+        f=folder('Open building footprints — preview (maximum 5,000; full GeoJSON export supplied)')
+        for feat in buildings.features[:5000]:
             pm=ET.SubElement(f,'Placemark');p=feat['properties'];ET.SubElement(pm,'name').text=str(p.get('building_id','Building'))
             ET.SubElement(pm,'description').text='\n'.join(f'{k}: {v}' for k,v in p.items())
             geom=feat['geometry'];polys=[geom['coordinates']] if geom['type']=='Polygon' else geom['coordinates'];parent=pm
@@ -71,9 +71,11 @@ def write_earth(plan,path):
 
 class LocalMapServer:
     def __init__(self,folder):
-        folder=Path(folder).resolve();index=None
+        folder=Path(folder).resolve();index=None;planning_db=None
         try:
             settings=json.loads((folder/'run_settings.json').read_text())
+            planning_db=settings.get('temporary_database') or settings.get('summary',{}).get('database_path')
+            if planning_db and not Path(planning_db).is_file():planning_db=None
             candidate=settings.get('source_layers_and_crs',{}).get('buildings',{}).get('index_path')
             if candidate and Path(candidate).is_file():
                 from building_index import DiskBuildingContext
@@ -84,6 +86,31 @@ class LocalMapServer:
             def do_GET(self):
                 from urllib.parse import urlparse,parse_qs
                 request=urlparse(self.path)
+                if request.path=='/api/planning':
+                    try:
+                        import sqlite3
+                        from contextlib import closing
+                        if planning_db is None:self.send_error(503,'Temporary planning database is no longer available. Use full exported files or embedded previews.');return
+                        query=parse_qs(request.query);layer=query.get('layer',[''])[0]
+                        if layer not in ('sites','grids','airtel','competitors','no_build'):raise ValueError()
+                        bbox=tuple(map(float,query.get('bbox',[''])[0].split(',')))
+                        if len(bbox)!=4 or not all(math.isfinite(v) for v in bbox):raise ValueError()
+                        w,south,e,n=bbox
+                        if not(-180<=w<e<=180 and -90<=south<n<=90):raise ValueError()
+                        with closing(sqlite3.connect(Path(planning_db).resolve().as_uri()+'?mode=ro',uri=True)) as db:
+                            db.execute('PRAGMA cache_size=-4096')
+                            records=db.execute(f'SELECT t.payload,t.geometry FROM {layer}_rt b JOIN {layer} t ON b.rid=t.rid WHERE b.maxx>=? AND b.minx<=? AND b.maxy>=? AND b.miny<=? ORDER BY t.rid LIMIT 5001',(w,e,south,n)).fetchall()
+                        features=[]
+                        for text,geometry in records[:5000]:
+                            properties=json.loads(text);properties['layer']=layer
+                            geom=json.loads(geometry) if geometry else {'type':'Point','coordinates':[properties['lon'],properties['lat']]}
+                            features.append({'type':'Feature','geometry':geom,'properties':properties})
+                        payload=json.dumps({'type':'FeatureCollection','features':features,'truncated':len(records)>5000}).encode()
+                        self.send_response(200);self.send_header('Content-Type','application/geo+json');self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(payload)));self.end_headers();self.wfile.write(payload)
+                    except (ValueError,KeyError):self.send_error(400,'Invalid planning layer/bbox.')
+                    except sqlite3.Error:self.send_error(503,'Temporary planning database is no longer available.')
+                    except (BrokenPipeError,ConnectionResetError):pass
+                    return
                 if request.path=='/api/buildings':
                     try:
                         if index is None:self.send_error(503,'Building index unavailable; embedded preview remains available.');return
@@ -113,7 +140,7 @@ TEMPLATE=r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta na
 <body><header><h1>Site planning — buildings and imagery review</h1><div id="subtitle"></div></header><main><aside>
 <label>Map provider <select id="provider"><option value="osm">OpenStreetMap</option><option value="google">Google Maps road / satellite / terrain</option></select></label>
 <div class="small">Google requires your Maps JavaScript API key and enabled billing. Enter it for this page session; it is not saved.</div><input id="googleKey" type="password" autocomplete="off" placeholder="Google Maps API key"><button id="loadGoogle" style="margin-top:6px">Load Google map</button>
-<section><strong>Planning overlays</strong><label><input id="sites" type="checkbox" checked> Proposed sites</label><label><input id="airtel" type="checkbox" checked> Airtel inventory / reserved sites</label><label><input id="competitors" type="checkbox"> Competitor sites</label><label><input id="grids" type="checkbox"> Grids / KPI categories</label><label><input id="no_build" type="checkbox" checked> No-build polygons</label><label><input id="buildings" type="checkbox" checked> Open building footprints</label></section>
+<p id="planningPreview" class="small"></p><section><strong>Planning overlays</strong><label><input id="sites" type="checkbox" checked> Proposed sites</label><label><input id="airtel" type="checkbox" checked> Airtel inventory / reserved sites</label><label><input id="competitors" type="checkbox"> Competitor sites</label><label><input id="grids" type="checkbox"> Grids / KPI categories</label><label><input id="no_build" type="checkbox" checked> No-build polygons</label><label><input id="buildings" type="checkbox" checked> Open building footprints</label></section>
 <section><a href="planning_google_earth.kmz" download>Download Google Earth KMZ</a> · <a href="planning_map.html">Offline map</a><p class="small">Import the KMZ into Google Earth Pro or Earth web to inspect sites and building outlines on its imagery/terrain. Google Earth imagery is not downloaded or analysed by this application.</p></section>
 <div id="status" class="small">Loading OpenStreetMap viewer…</div><section><strong>Selected location</strong><div id="info" class="small"></div><p><a id="googleLink" target="_blank" rel="noopener">Open in Google Maps</a></p><a href="https://earth.google.com/web/" target="_blank" rel="noopener">Open Google Earth</a></section>
 <section class="small">Building outlines are mapped/inferred evidence, not certified roof or land suitability. Rooftop search points require structural, RF and acquisition review. Empty building coverage can reflect incomplete mapping. Existing/planned sites remain visible.</section><div id="sources" class="small"></div><section><strong>Ranked proposed sites</strong><div id="siteList"></div></section></aside><div id="view"><div id="osm" class="map"></div><div id="google" class="map"></div></div></main>
@@ -136,7 +163,8 @@ window.initPlanningGoogle=()=>{try{let c=osm?osm.getCenter():{lat:0,lng:20};gm=n
 $('loadGoogle').onclick=()=>{if(googleLoaded){$('provider').value='google';switchMap('google');return}let key=$('googleKey').value.trim();if(!key){$('status').textContent='Provide your Google Maps API key. OSM and Google Earth export do not need it.';return}if(document.getElementById('googleApiScript')){$('status').textContent='Google API is already loading. If it failed, reload this page to retry.';return}$('provider').value='google';switchMap('google');let script=document.createElement('script');script.id='googleApiScript';script.async=true;script.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(key)+'&loading=async&callback=initPlanningGoogle&v=weekly';script.onerror=()=>{$('status').textContent='Google Maps script failed to load. Check connectivity and API setup.'};document.head.appendChild(script);$('googleKey').value=''};
 $('provider').onchange=e=>switchMap(e.target.value);for(const key of keys)$(key).onchange=syncLayers;
 $('subtitle').textContent=D.summary.country+' · '+D.summary.grid_period+' · '+D.summary.mode+' · '+D.summary.location_mode;
-$('sources').textContent='Building source: '+(D.building_metadata.source||'None loaded')+'; license: '+(D.building_metadata.license||'not supplied')+'. Showing '+D.layers.buildings.features.length+' of '+D.building_total+' input footprints (viewer cap 20,000; full footprints exported). '+(D.building_metadata.retrieved_utc?'Retrieved '+D.building_metadata.retrieved_utc:'');
+$('planningPreview').textContent=D.summary.map_preview_limits?'Static preview is capped at 500 planned sites and 5,000 grids/inventory records. Full CSV/GeoJSON exports contain every result. Use the OpenLayers viewer for live viewport queries.':'';
+$('sources').textContent='Building source: '+(D.building_metadata.source||'None loaded')+'; license: '+(D.building_metadata.license||'not supplied')+'. Showing '+D.layers.buildings.features.length+' of '+D.building_total+' input footprints (viewer cap 5,000; full footprints exported). '+(D.building_metadata.retrieved_utc?'Retrieved '+D.building_metadata.retrieved_utc:'');
 for(const f of D.layers.sites.features){const b=document.createElement('button');b.textContent=f.properties.rank+'. '+f.properties.candidate_id;b.onclick=()=>locate(f);$('siteList').appendChild(b)}
 let leaflet=document.createElement('script');leaflet.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';leaflet.onload=osmInit;leaflet.onerror=()=>osmInit();document.head.appendChild(leaflet);
 </script></body></html>'''

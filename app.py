@@ -24,7 +24,7 @@ class App(tk.Tk):
         self.geometry(f'{width}x{height}+20+20');self.minsize(min(680,width),min(420,height));self.resizable(True,True)
         self.columnconfigure(0,weight=1);self.rowconfigure(1,weight=1);self.page_hosts={}
         self.messages=queue.Queue();self.cancelled=threading.Event();self.busy=False;self.last_folder=None;self.web_server=None
-        self.source_options={};self.profile_active=None;self.paths={};self.maps={};self.mapboxes={};self.values={};self.summary=tk.StringVar(value='Load sources, select country and resolution, then run planning.')
+        self.current_result=None;self.page_offset=0;self.closing=False;self.source_options={};self.profile_active=None;self.paths={};self.maps={};self.mapboxes={};self.values={};self.summary=tk.StringVar(value='Load sources, select country and resolution, then run planning.')
         style=ttk.Style(self);style.theme_use('clam');style.configure('TButton',padding=7);style.configure('Title.TLabel',font=('Segoe UI',19,'bold'));style.configure('TLabelframe.Label',font=('Segoe UI',10,'bold'))
         top=ttk.Frame(self,padding=(16,8));top.grid(row=0,column=0,sticky='ew');top.columnconfigure(0,weight=1)
         ttk.Label(top,text='New Site Planning',style='Title.TLabel').grid(row=0,column=0,sticky='w')
@@ -36,7 +36,7 @@ class App(tk.Tk):
         self.location_tab=self.make_page('Location search',index=2)
         self.mapping_page=self.make_page('Field mappings')
         self.building_tab=self.make_page('Buildings / maps',index=3)
-        self.build_inputs();self.build_rules();self.values['mode'].set('MR preview');self.build_location_rules();self.build_building_ui();self.build_source_profiles();self.build_results()
+        self.build_inputs();self.build_rules();self.values['mode'].set('Population' if self.paths['population'].get() else 'MR preview');self.build_location_rules();self.build_building_ui();self.build_source_profiles();self.build_results()
         self.logbox=tk.Text(self.logs_tab,wrap='word',font=('Consolas',10));self.logbox.pack(fill='both',expand=True)
         # A separate grid row reserves the footer before the notebook gets spare space.
         bottom=ttk.Frame(self,padding=(12,8));bottom.grid(row=2,column=0,sticky='ew');bottom.columnconfigure(0,weight=1)
@@ -54,7 +54,16 @@ class App(tk.Tk):
         self.bind('<Button-4>',self.scroll_page);self.bind('<Button-5>',self.scroll_page)
         self.tabs.bind('<<NotebookTabChanged>>',self.sync_section)
         self.sync_section()
+        self.protocol('WM_DELETE_WINDOW',self.on_close)
         self.after(100,self.poll)
+
+    def on_close(self):
+        self.closing=True
+        if self.busy:
+            self.cancelled.set();self.summary.set('Closing: cancelling the current task and cleaning temporary data...');self.after(100,self.on_close);return
+        if self.web_server:self.web_server.close();self.web_server=None
+        if self.current_result and hasattr(self.current_result,'close'):self.current_result.close()
+        self.destroy()
 
     def make_page(self,title,index='end',scroll=True):
         host=ScrollablePage(self.tabs) if scroll else ttk.Frame(self.tabs,padding=12)
@@ -82,9 +91,9 @@ class App(tk.Tk):
             widget=getattr(widget,'master',None)
 
     def build_inputs(self):
-        ttk.Label(self.inputs,text='Bundled September grids and Airtel site master are selected. Competitor data is January–May 2026.').pack(anchor='w')
-        ttk.Label(self.inputs,text='Population is NOT present. Supply population by grid, or choose MR preview under Planning rules.').pack(anchor='w',pady=(4,10))
-        files={'grid':'Postgres_Sep_2026(1).csv','airtel':'Sep_26_SM.csv','competitor':'Comp_data.csv','population':'','candidates':'','demand_points':'','exclusions':'','infrastructure':'','no_build_polygons':''}
+        ttk.Label(self.inputs,text='Select grid, Airtel site master and competitor inputs. Confirm their snapshots before planning.').pack(anchor='w')
+        ttk.Label(self.inputs,text='Load real population by grid for Population mode; MR preview uses a proxy. Inputs are staged in temporary databases when planning starts.').pack(anchor='w',pady=(4,10))
+        files={'grid':'Postgres_Sep_2026(1).csv','airtel':'Sep_26_SM.csv','competitor':'Comp_data.csv','population':('Population_for_Site_Planner.csv' if (ROOT/'data/Population_for_Site_Planner.csv').exists() else ''),'candidates':'','demand_points':'','exclusions':'','infrastructure':'','no_build_polygons':''}
         area=ttk.Frame(self.inputs);area.pack(fill='x')
         for i,(kind,filename) in enumerate(files.items()):
             v=tk.StringVar(value=str(ROOT/'data'/filename) if filename else '');self.paths[kind]=v
@@ -150,7 +159,7 @@ class App(tk.Tk):
         frame=ttk.LabelFrame(self.location_tab,text='Location and feasibility settings',padding=14);frame.pack(fill='x')
         settings=[('location_mode','Location method',['Area search','Supplied candidates','Grid centroid (legacy)']),
           ('search_spacing_m','Area-search spacing (m)',None),('distance_decay','Distance-decay strength (0–10)',None),
-          ('max_candidate_points','Maximum location alternatives',None),('max_road_km','Maximum road reference distance (km)',None),
+          ('max_candidate_points','Maximum location alternatives',None),('import_batch_size','Input batch rows (memory control)',None),('max_road_km','Maximum road reference distance (km)',None),
           ('max_backhaul_km','Maximum backhaul reference distance (km)',None),('max_power_km','Maximum power reference distance (km)',None)]
         defaults=Rules()
         for i,(key,label,options) in enumerate(settings):
@@ -169,7 +178,7 @@ class App(tk.Tk):
         ttk.Entry(row,textvariable=self.paths['buildings']).pack(side='left',fill='x',expand=True)
         ttk.Button(row,text='Load footprint file',command=self.browse_buildings).pack(side='left',padx=5)
         settings=ttk.LabelFrame(self.building_tab,text='Planning evidence rules',padding=12);settings.pack(fill='x',pady=8)
-        items=[('building_storage','Building storage',['Disk index','Regional memory']),('building_rule','Building rule',['Ground clearance','Context only','Rooftop search']),
+        items=[('building_storage','Building storage',['Disk index']),('building_rule','Building rule',['Ground clearance','Context only','Rooftop search']),
           ('building_clearance_m','Ground-site footprint clearance (m)',None),('building_context_radius_m','Mapped building context radius (m)',None),
           ('building_density_boost','Maximum mapped-density score boost',None),('building_min_confidence','Minimum supplied detection confidence',None),
           ('min_roof_area_m2','Minimum footprint area for roof review (m²)',None),('building_clip_bbox','Optional clip bbox: south,west,north,east',None)]
@@ -188,7 +197,7 @@ class App(tk.Tk):
         links=ttk.Frame(self.building_tab);links.pack(fill='x',pady=6)
         ttk.Button(links,text='Google Open Buildings downloads',command=lambda:webbrowser.open('https://sites.research.google/gr/open-buildings/')).pack(side='left')
         ttk.Button(links,text='Open Google Earth',command=lambda:webbrowser.open('https://earth.google.com/web/')).pack(side='left',padx=8)
-        ttk.Label(self.building_tab,text='Supported building data: regional GPKG, SHP, complete GDB or readable GDBTABLE, KML/KMZ, GeoJSON/Esri JSON, and WKT CSV/CSV.GZ. Choose the polygon layer in Source layers / CRS. Disk index mode streams large datasets to a reusable spatial index and queries local batches during screening. Regional memory mode keeps its 200,000-footprint / 200 km limit. Rooftop search generates unverified footprint interior points when Location method is Area search; supplied candidates retain their original coordinates. OpenLayers provides Google Road/Satellite and OSM backgrounds; the alternate Google API viewer requires its key. Earth review uses exported KML/KMZ. No rooftop strength, imagery extraction or terrain propagation is inferred.',wraplength=1070,justify='left').pack(anchor='w',pady=8)
+        ttk.Label(self.building_tab,text='Supported building data: regional GPKG, SHP, complete GDB or readable GDBTABLE, KML/KMZ, GeoJSON/Esri JSON, and WKT CSV/CSV.GZ. Choose the polygon layer in Source layers / CRS. Input rows and spatial indices are staged in temporary databases; screening and exports use bounded batches. Temporary data is removed when results are closed. Rooftop search generates unverified footprint interior points when Location method is Area search; supplied candidates retain their original coordinates. OpenLayers provides Google Road/Satellite and OSM backgrounds; the alternate Google API viewer requires its key. Earth review uses exported KML/KMZ. No rooftop strength, imagery extraction or terrain propagation is inferred.',wraplength=1070,justify='left').pack(anchor='w',pady=8)
 
     def browse_buildings(self):
         if self.busy:return
@@ -235,6 +244,10 @@ class App(tk.Tk):
         ttk.Button(buttons,text='OpenLayers / Google maps',command=self.open_web_map).pack(side='left',padx=8)
         ttk.Button(buttons,text='Open output folder',command=self.open_folder).pack(side='left',padx=8)
         columns=('rank','candidate_id','grid_id','town','category','incremental_demand','assigned_grids','nearest_airtel_km','nearest_competitor_km','lat','lon','location_basis','offset_from_grid_centroid_m','location_status','mapped_buildings_within_radius','containing_building_id')
+        pages=ttk.Frame(self.results);pages.pack(fill='x',pady=5)
+        ttk.Button(pages,text='Previous 200',command=lambda:self.show_result_page(-200)).pack(side='left')
+        ttk.Button(pages,text='Next 200',command=lambda:self.show_result_page(200)).pack(side='left',padx=6)
+        self.page_info=tk.StringVar(value='Results are paginated.');ttk.Label(pages,textvariable=self.page_info).pack(side='left',padx=8)
         area=ttk.Frame(self.results);area.pack(fill='both',expand=True)
         self.tree=ttk.Treeview(area,columns=columns,show='headings');ys=ttk.Scrollbar(area,orient='vertical',command=self.tree.yview);xs=ttk.Scrollbar(area,orient='horizontal',command=self.tree.xview)
         self.tree.configure(yscrollcommand=ys.set,xscrollcommand=xs.set)
@@ -242,6 +255,18 @@ class App(tk.Tk):
         for col in columns:self.tree.heading(col,text=col.replace('_',' ').title());self.tree.column(col,width=135)
         self.result_info=tk.StringVar(value='Results include CSVs, site GeoJSON, run settings, data-quality issues and an offline map.')
         ttk.Label(self.results,textvariable=self.result_info,wraplength=1070,justify='left').pack(fill='x',pady=12)
+
+    def show_result_page(self,step=0):
+        if self.current_result is None:return
+        total=len(self.current_result.sites);self.page_offset=max(0,min(self.page_offset+step,max(0,((total-1)//200)*200)))
+        frame=self.current_result.site_page(self.page_offset,200) if hasattr(self.current_result,'site_page') else self.current_result.sites.iloc[self.page_offset:self.page_offset+200]
+        self.tree.delete(*self.tree.get_children())
+        for row in frame.to_dict('records'):
+            values=[]
+            for col in self.tree['columns']:
+                val=row.get(col,'');values.append(f'{val:.7f}' if col in ('lat','lon') and isinstance(val,float) else f'{val:,.2f}' if isinstance(val,float) else val)
+            self.tree.insert('','end',values=values)
+        self.page_info.set(f'Showing {self.page_offset+1 if total else 0:,}–{min(total,self.page_offset+200):,} of {total:,}; full results exported.')
 
     def get_paths(self):return {k:v.get().strip() for k,v in self.paths.items()}
     def get_maps(self):return {k:{f:v.get().strip() for f,v in fields.items()} for k,fields in self.maps.items()}
@@ -321,13 +346,15 @@ class App(tk.Tk):
             def work():
                 try:
                     from building_stream import building_layers,building_chunks
-                    layers=building_layers(path) if kind=='buildings' else list_layers(path);names=[v['name'] for v in layers];selected=opt.get('layer')
+                    from stream_io import source_layers,stream_source
+                    layers=building_layers(path) if kind=='buildings' else source_layers(path);names=[v['name'] for v in layers];selected=opt.get('layer')
                     if selected not in names:selected=names[0] if len(names)==1 else None
                     if selected is None:self.messages.put(('source_layers',(kind,layers,None,None,{},[])));return
                     if kind=='buildings' and not str(path).lower().endswith(('.csv','.csv.gz')):
                         data=next(building_chunks(path,layer=selected,crs_override=opt.get('crs_override'),chunk_size=300),None)
                         if data is None:raise ValueError('Selected building layer is empty.')
-                    else:data=read_source(path,layer=selected,crs_override=opt.get('crs_override'),nrows=300)
+                    else:data=next(stream_source(path,layer=selected,crs_override=opt.get('crs_override'),batch_size=300,nrows=300),None)
+                    if data is None:raise ValueError('Selected source is empty.')
                     mapping,notes=match_mapping(data.frame,kind,maps,ALIASES[kind]) if kind in ALIASES else ({},[])
                     if kind in ALIASES:
                         parent_roles=['id','country','period','size'] if kind=='grid' else []
@@ -371,14 +398,24 @@ class App(tk.Tk):
     def template(self):
         if self.busy:return
         try:
-            rules=self.get_rules();p=self.get_paths()['grid'];opt=self.get_source_options().get('grid',{});data=read_source(p,layer=opt.get('layer'),crs_override=opt.get('crs_override'));mapping,_=match_mapping(data.frame,'grid',self.get_maps()['grid'],ALIASES['grid']);frame,mapping,_=normalize_role(data,'grid',mapping,opt);d=canonical(frame,'grid',mapping)
-            d=d[(d.country==rules.country)&(d['size'].str.lower().str.replace(' ','')==rules.grid_size)&(d.period==rules.grid_period)].copy()
-            if d.empty:raise ValueError('No matching grids. Select country, grid resolution and snapshot first.')
-            out=d[['country','id','lat','lon']].rename(columns={'country':'opco','id':'grid_id'})
-            out['population']=''
-            path=filedialog.asksaveasfilename(defaultextension='.csv',initialfile=f'population_{rules.country}_{rules.grid_size}_template.csv',filetypes=[('CSV','*.csv')])
-            if path:
-                out.to_csv(path,index=False);messagebox.showinfo('Population template','Fill the population column with real data. Choose People per grid or People per km2 to match your values. Blank rows remain unknown and are excluded.')
+            rules=self.get_rules();path=self.get_paths()['grid'];options=self.get_source_options();maps=self.get_maps()
+            target=filedialog.asksaveasfilename(defaultextension='.csv',initialfile=f'population_{rules.country}_{rules.grid_size}_template.csv',filetypes=[('CSV','*.csv')])
+            if not target:return
+            self.busy=True;self.cancelled.clear();self.run_button.configure(state='disabled');self.progress.start(12)
+            def work():
+                from session_db import Session
+                import csv
+                store=Session(lambda msg:self.messages.put(('log',msg)),self.cancelled.is_set,rules.import_batch_size)
+                try:
+                    store.ingest({'grid':path},rules,maps,options);count=0
+                    with open(target,'w',encoding='utf-8-sig',newline='') as f:
+                        writer=csv.writer(f);writer.writerow(['opco','grid_id','latitude','longitude','population'])
+                        for _,row,_ in store.input_rows('grid',country=rules.country.upper(),size=rules.grid_size,period=rules.grid_period):writer.writerow([row['country'],row['id'],row['lat'],row['lon'],'']);count+=1
+                    if not count:raise ValueError('No grids match the selected country, resolution and snapshot.')
+                    self.messages.put(('template_done',(target,count)))
+                except Exception as exc:self.messages.put(('error',(str(exc),traceback.format_exc())))
+                finally:store.close()
+            threading.Thread(target=work,daemon=True).start()
         except Exception as exc:messagebox.showerror('Population template',str(exc))
 
     def save_scenario(self):
@@ -420,39 +457,43 @@ class App(tk.Tk):
             if rules.mode=='MR preview':
                 # Inform, without forcing a repeated confirmation dialog.
                 self.summary.set('MR preview selected. Results measure MR records, not people.')
+            if self.web_server:self.web_server.close();self.web_server=None
+            if self.current_result and hasattr(self.current_result,'close'):self.current_result.close();self.current_result=None
             self.busy=True;self.cancelled.clear();self.run_button.configure(state='disabled');self.progress.start(12)
             self.select_page(self.logs_tab)
             threading.Thread(target=self.worker,args=(paths,rules,maps,output,options),daemon=True).start()
         except Exception as exc:messagebox.showerror('Planning inputs',str(exc))
 
     def worker(self,paths,rules,maps,output,options):
+        result=None
         try:
             result=run_paths(paths,rules,maps,lambda s:self.messages.put(('log',s)),self.cancelled.is_set,source_options=options)
             if self.cancelled.is_set():raise InterruptedError('Planning cancelled. No results exported.')
             folder=save_plan(result,output,paths)
             self.messages.put(('done',(result,folder)))
-        except Exception as exc:self.messages.put(('error',(str(exc),traceback.format_exc())))
+        except Exception as exc:
+            if result is not None and hasattr(result,'close'):result.close()
+            self.messages.put(('error',(str(exc),traceback.format_exc())))
 
     def poll(self):
         try:
             while True:
                 kind,value=self.messages.get_nowait()
-                if kind=='log':self.logbox.insert('end',value+'\n');self.logbox.see('end')
+                if kind=='log':
+                    self.logbox.insert('end',value+'\n');self.logbox.see('end')
+                    if int(self.logbox.index('end-1c').split('.')[0])>2000:self.logbox.delete('1.0','501.0')
                 else:
                     self.busy=False;self.run_button.configure(state='normal');self.progress.stop()
                     if kind=='error':
-                        message,trace=value;self.logbox.insert('end',trace+'\n');self.summary.set(message);messagebox.showerror('Planning stopped',message)
+                        message,trace=value;self.logbox.insert('end',trace+'\n');self.summary.set(message)
+                        if not self.closing:messagebox.showerror('Planning stopped',message)
                     elif kind=='source_layers':self.display_source(value)
+                    elif kind=='template_done':self.summary.set(f'Population template saved: {value[1]:,} rows. Fill real population values, then load it as Population.')
                     elif kind=='building_done':
                         target,count=value;self.paths['buildings'].set(str(target));self.reset_source_profile('buildings');self.summary.set(f'{count:,} mapped building footprints loaded. Re-run planning to apply the building rules.');self.select_page(self.building_tab)
                     elif kind=='done':
                         result,folder=value;self.last_folder=folder
-                        self.tree.delete(*self.tree.get_children())
-                        for row in result.sites.to_dict('records'):
-                            vals=[]
-                            for col in self.tree['columns']:
-                                val=row.get(col,'');vals.append(f'{val:.7f}' if col in ('lat','lon') and isinstance(val,float) else f'{val:,.2f}' if isinstance(val,float) else val)
-                            self.tree.insert('','end',values=vals)
+                        self.current_result=result;self.page_offset=0;self.show_result_page()
                         self.result_info.set(f'{result.summary["proposed_sites"]} sites; {result.summary["assigned_grids"]:,} assigned grids; '+
                           f'{result.summary["incremental_demand_total"]:,.0f} {result.summary["demand_unit"]}.\n'+
                           f'{result.summary["unassigned_target_grids"]:,} target grids remain partly/fully unassigned. Results: {folder}\n'+

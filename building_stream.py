@@ -47,6 +47,13 @@ def building_chunks(path,layer=None,crs_override=None,bbox=None,cancelled=lambda
                     if len(rows)>=chunk_size:yield chunk();rows=[];geometries=[]
             if rows:yield chunk()
             return
+    if path.suffix.lower() in ('.kml','.kmz'):
+        from stream_io import stream_source
+        for data in stream_source(path,layer,crs_override,batch_size=chunk_size,cancelled=cancelled):
+            if bbox and data.geometries is not None:
+                mask=np.array([g is not None and g.intersects(box(*bbox)) for g in data.geometries]);data.frame=data.frame.loc[mask].reset_index(drop=True);data.geometries=data.geometries[mask]
+            yield data
+        return
     yield from iter_source(path,layer=layer,crs_override=crs_override,bbox=bbox,cancelled=cancelled,chunk_size=chunk_size)
 
 
@@ -80,5 +87,8 @@ def building_layers(path):
         with path.open('rb') as f:first=next(ijson.items(f,'features.item',use_float=True),{})
         geometry=first.get('geometry') or {}
         if geometry.get('type') in ('Polygon','MultiPolygon') or 'rings' in geometry:return [{'name':path.stem,'geometry_type':'Polygon / MultiPolygon (streamed)'}]
+    if path.suffix.lower() in ('.kml','.kmz'):
+        from stream_io import source_layers
+        return source_layers(path)
     from gis_io import list_layers
     return list_layers(path)

@@ -230,11 +230,11 @@ def read_source(path,layer=None,crs_override=None,nrows=None,bbox=None,cancelled
 def match_mapping(frame,kind,current,defaults):
     """Preserve valid explicit choices; suggest only unambiguous known aliases."""
     cols=list(frame.columns);result=dict(current or defaults);notes=[]
-    aliases={'country':['opco','opco_id','country','country_code'], 'id':['grid_id'] if kind in ('grid','population') else ['candidate_id','point_id','physical_site_id','siteid','site_id','reference_id','exclusion_id'],
+    aliases={'country':['opco','opco_id','country','country_code'], 'id':['grid_id','GridID'] if kind in ('grid','population') else ['candidate_id','point_id','physical_site_id','siteid','site_id','reference_id','exclusion_id'],
       'lat':['latitude','lat','centroid_lat','centroid_latitude'],'lon':['longitude','lon','long','centroid_long','centroid_longitude'],
       'operator':['operator','operator_name','network','opco_comp'],'size':['grid_size','resolution'],
       'category':['combined_category_wf','combined_category','category'],'period':['month','db_period','period'],
-      'value':['population','population_count','population_density'],'technology':['technology','tech'],
+      'value':['population','population_count','population_density','nga_general_2020_sum'],'technology':['technology','tech'],
       'status':['physical_site_status','status'],'grid_id':['grid_id'],'feasible':['feasible'],
       'mr':['total_mr_count'],'area':['area_km2_actual'],'coverage':['coverage_category'],'speed':['throughput_category']}
     for role,col in list(result.items()):
