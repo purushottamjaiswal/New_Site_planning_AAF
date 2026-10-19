@@ -98,7 +98,7 @@ class SitingTests(unittest.TestCase):
         p=self.plan(raw,max_sites=1);self.assertEqual(p.sites.source_candidate_id.iloc[0],'high')
 
     def test_actual_coordinate_not_parent_centroid_controls_spacing(self):
-        raw=self.raw();raw['airtel'].loc[0,'longitude']=.008
+        raw=self.raw();raw['airtel']['longitude']=raw['airtel'].longitude.astype(float);raw['airtel'].loc[0,'longitude']=.008
         raw['candidates']=candidates([['NG','edge','b',0,.012,'Yes']])
         p=self.plan(raw,min_airtel_km=.3)
         self.assertEqual(p.sites.source_candidate_id.tolist(),['edge'])
