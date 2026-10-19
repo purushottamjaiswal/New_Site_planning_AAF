@@ -1,0 +1,7 @@
+# Validation for version 5.1
+
+- The synthetic automated suite passed 57 tests in the development environment. It covers standalone GIS/table import, projected coordinates, polygon holes/boundaries, demand assignment, candidate constraints, building disk indices and local map endpoints.
+- Synthetic stress check: 1,000,005 source rows representing 200,001 unique footprint polygons indexed successfully. The measured Linux process peak RSS was 114.83 MiB; elapsed fixture generation/index/query time was 33.87 seconds, with completed-index reuse taking 0.12 seconds. These are fixture-specific measurements, not resource guarantees for other geometries or computers. Evidence: `tests/large_building_stress_check.json`.
+- Native Tk window checks under a virtual Linux display covered 1280×900, 1200×650, 1000×560, 800×480 and 680×420 at two Tk scaling settings. The Run button remained inside the window on every checked main tab and no callback errors occurred. Evidence: `tests/ui_resize_check.json`.
+- Windows taskbar/DPI interaction and live browser rendering have not been verified. Current development checks do not establish compatibility with every proprietary dataset, GDAL driver or geometry structure.
+- Open footprints do not certify roof structure, land rights, power, access or RF coverage. Incomplete mapping does not establish empty land. Field, acquisition and engineering review remain necessary for deployment.

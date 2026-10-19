@@ -1,0 +1,30 @@
+{
+  "paths": {
+    "grid": "data/grids.csv",
+    "airtel": "data/airtel_sites.csv",
+    "competitor": "data/competitor_sites.csv",
+    "population": "",
+    "buildings": "data/buildings.gpkg"
+  },
+  "rules": {
+    "country": "NG",
+    "grid_size": "1km",
+    "grid_period": "Sep'26",
+    "airtel_period": "Sep_2026",
+    "mode": "MR preview",
+    "max_sites": 30,
+    "location_mode": "Area search",
+    "search_spacing_m": 250.0,
+    "distance_decay": 0.8,
+    "building_rule": "Ground clearance",
+    "building_clearance_m": 10,
+    "building_context_radius_m": 500,
+    "building_density_boost": 0.15
+  },
+  "output_dir": "outputs",
+  "source_options": {
+    "buildings": {
+      "layer": "buildings"
+    }
+  }
+}

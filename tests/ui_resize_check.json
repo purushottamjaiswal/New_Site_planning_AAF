@@ -1,0 +1,67 @@
+{
+  "native_toolkit": "Tk under virtual Linux display",
+  "checks": [
+    {
+      "width": 1280,
+      "height": 900,
+      "tk_scaling": 1.333333,
+      "run_button_visible_all_tabs": true
+    },
+    {
+      "width": 1200,
+      "height": 650,
+      "tk_scaling": 1.333333,
+      "run_button_visible_all_tabs": true
+    },
+    {
+      "width": 1000,
+      "height": 560,
+      "tk_scaling": 1.333333,
+      "run_button_visible_all_tabs": true
+    },
+    {
+      "width": 800,
+      "height": 480,
+      "tk_scaling": 1.333333,
+      "run_button_visible_all_tabs": true
+    },
+    {
+      "width": 680,
+      "height": 420,
+      "tk_scaling": 1.333333,
+      "run_button_visible_all_tabs": true
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "tk_scaling": 2.0,
+      "run_button_visible_all_tabs": true
+    },
+    {
+      "width": 1200,
+      "height": 650,
+      "tk_scaling": 2.0,
+      "run_button_visible_all_tabs": true
+    },
+    {
+      "width": 1000,
+      "height": 560,
+      "tk_scaling": 2.0,
+      "run_button_visible_all_tabs": true
+    },
+    {
+      "width": 800,
+      "height": 480,
+      "tk_scaling": 2.0,
+      "run_button_visible_all_tabs": true
+    },
+    {
+      "width": 680,
+      "height": 420,
+      "tk_scaling": 2.0,
+      "run_button_visible_all_tabs": true
+    }
+  ],
+  "callback_errors": [],
+  "windows_interaction": "not tested"
+}

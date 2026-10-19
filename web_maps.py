@@ -1,0 +1,142 @@
+"""Official-provider web views plus portable Google Earth KML/KMZ review layers."""
+from pathlib import Path
+import json,math,zipfile,xml.etree.ElementTree as ET
+from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
+from functools import partial
+import threading
+
+
+def feature_points(frame,kind):
+    result=[]
+    for row in json.loads(frame.to_json(orient='records')):
+        result.append({'type':'Feature','geometry':{'type':'Point','coordinates':[row['lon'],row['lat']]},
+          'properties':{'layer':kind,**row}})
+    return {'type':'FeatureCollection','features':result}
+
+
+def map_data(plan):
+    buildings=getattr(plan,'buildings_context',None)
+    context=getattr(plan,'polygon_context',None)
+    grid_features=None;no_build=[]
+    if context is not None:
+        from shapely.geometry import mapping
+        rows={r['id']:r for r in json.loads(plan.grids.to_json(orient='records'))}
+        grid_features=[{'type':'Feature','geometry':mapping(g),'properties':{'layer':'grids',**rows[k]}} for k,g in context.grids.items() if k in rows]
+        no_build=[{'type':'Feature','geometry':mapping(g),'properties':{'layer':'no_build','id':i+1}} for i,g in enumerate(context.exclusions)]
+    data={'summary':plan.summary,'layers':{
+      'sites':feature_points(plan.sites,'sites'),
+      'airtel':feature_points(plan.airtel,'airtel'),
+      'competitors':feature_points(plan.competitors,'competitors'),
+      'grids':{'type':'FeatureCollection','features':grid_features} if grid_features else feature_points(plan.grids[['id','lat','lon','category','town','assigned_candidate']],'grids'),
+      'no_build':{'type':'FeatureCollection','features':no_build},
+      'buildings':{'type':'FeatureCollection','features':buildings.features[:20000] if buildings else []}},
+      'building_metadata':buildings.metadata if buildings else {},'building_total':len(buildings.features) if buildings else 0}
+    return data
+
+
+def write_web_map(plan,path):
+    data=map_data(plan)
+    encoded=json.dumps(data,allow_nan=False).replace('<','\\u003c').replace('>','\\u003e').replace('&','\\u0026')
+    Path(path).write_text(TEMPLATE.replace('__DATA__',encoded),encoding='utf-8')
+
+
+def write_earth(plan,path):
+    NS='http://www.opengis.net/kml/2.2';ET.register_namespace('',NS)
+    root=ET.Element('{'+NS+'}kml');doc=ET.SubElement(root,'Document');ET.SubElement(doc,'name').text='New site planning — engineering review'
+    ET.SubElement(doc,'description').text='Proposed/active/planned sites and open footprint context. No survey, roof strength, imagery analysis or RF coverage certification is implied.'
+    def folder(name):
+        f=ET.SubElement(doc,'Folder');ET.SubElement(f,'name').text=name;return f
+    for frame,title in [(plan.sites,'Proposed sites'),(plan.airtel,'Airtel active / reserved / legacy'),(plan.competitors,'Historical competitor sites')]:
+        f=folder(title)
+        for row in json.loads(frame.to_json(orient='records')):
+            pm=ET.SubElement(f,'Placemark');ET.SubElement(pm,'name').text=str(row.get('candidate_id') or row.get('id','Site'))
+            ET.SubElement(pm,'description').text='\n'.join(f'{k}: {v}' for k,v in row.items() if v is not None)
+            point=ET.SubElement(pm,'Point');ET.SubElement(point,'altitudeMode').text='clampToGround';ET.SubElement(point,'coordinates').text=f"{row['lon']},{row['lat']},0"
+    buildings=getattr(plan,'buildings_context',None)
+    if buildings:
+        f=folder('Open building footprints — preview (maximum 20,000; full GeoJSON export supplied)')
+        for feat in buildings.features[:20000]:
+            pm=ET.SubElement(f,'Placemark');p=feat['properties'];ET.SubElement(pm,'name').text=str(p.get('building_id','Building'))
+            ET.SubElement(pm,'description').text='\n'.join(f'{k}: {v}' for k,v in p.items())
+            geom=feat['geometry'];polys=[geom['coordinates']] if geom['type']=='Polygon' else geom['coordinates'];parent=pm
+            if len(polys)>1:parent=ET.SubElement(pm,'MultiGeometry')
+            for coords in polys:
+                poly=ET.SubElement(parent,'Polygon');ET.SubElement(poly,'altitudeMode').text='clampToGround'
+                for i,ring in enumerate(coords):
+                    boundary=ET.SubElement(poly,'outerBoundaryIs' if i==0 else 'innerBoundaryIs');linear=ET.SubElement(boundary,'LinearRing')
+                    ET.SubElement(linear,'coordinates').text=' '.join(f'{c[0]},{c[1]},0' for c in ring)
+    path=Path(path);ET.ElementTree(root).write(path,encoding='utf-8',xml_declaration=True)
+    with zipfile.ZipFile(path.with_suffix('.kmz'),'w',zipfile.ZIP_DEFLATED) as z:z.write(path,'doc.kml')
+
+
+class LocalMapServer:
+    def __init__(self,folder):
+        folder=Path(folder).resolve();index=None
+        try:
+            settings=json.loads((folder/'run_settings.json').read_text())
+            candidate=settings.get('source_layers_and_crs',{}).get('buildings',{}).get('index_path')
+            if candidate and Path(candidate).is_file():
+                from building_index import DiskBuildingContext
+                index=DiskBuildingContext(candidate)
+        except (ValueError,OSError):pass
+        class Handler(SimpleHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_GET(self):
+                from urllib.parse import urlparse,parse_qs
+                request=urlparse(self.path)
+                if request.path=='/api/buildings':
+                    try:
+                        if index is None:self.send_error(503,'Building index unavailable; embedded preview remains available.');return
+                        bbox=tuple(map(float,parse_qs(request.query).get('bbox',[''])[0].split(',')))
+                        if len(bbox)!=4 or not all(math.isfinite(v) for v in bbox):raise ValueError()
+                        w,s,e,n=bbox
+                        if not(-180<=w<e<=180 and -90<=s<n<=90) or e-w>1 or n-s>1:self.send_error(400,'Zoom in to an area smaller than one degree.');return
+                        from itertools import islice
+                        features=list(islice(index.iter_features(bbox),5001));truncated=len(features)>5000
+                        payload=json.dumps({'type':'FeatureCollection','features':features[:5000],'truncated':truncated,'total_indexed':index.count}).encode()
+                        self.send_response(200);self.send_header('Content-Type','application/geo+json');self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(payload)));self.end_headers();self.wfile.write(payload)
+                    except (ValueError,KeyError):self.send_error(400,'Invalid building bbox.')
+                    except (BrokenPipeError,ConnectionResetError):pass
+                    return
+                try:super().do_GET()
+                except (BrokenPipeError,ConnectionResetError):pass
+        self.server=ThreadingHTTPServer(('127.0.0.1',8765),partial(Handler,directory=str(Path(folder).resolve())))
+        self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
+    @property
+    def url(self):return 'http://127.0.0.1:8765/planning_openlayers_map.html'
+    def close(self):self.server.shutdown();self.server.server_close()
+
+
+TEMPLATE=r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Site planning | OSM and Google</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>*{box-sizing:border-box}body{margin:0;font:14px system-ui;background:#eef2f7;color:#172740}header{padding:15px 22px;background:#192c45;color:white}h1{margin:0;font-size:22px}main{display:grid;grid-template-columns:300px 1fr;height:calc(100vh - 77px)}aside{padding:15px;background:white;overflow:auto}.map{height:100%;width:100%}#google{display:none}#view{position:relative;min-width:0}label{display:block;margin:10px 0}button,select,input{padding:8px;font:inherit;border:1px solid #b9c7d8;border-radius:5px}button{cursor:pointer;background:#edf2fa}section{border-top:1px solid #e0e6ef;margin-top:15px;padding-top:12px}.small{font-size:12px;line-height:1.5}#status{padding:8px;background:#fff1cc;white-space:pre-wrap}#info{white-space:pre-wrap;overflow-wrap:anywhere}#siteList button{display:block;width:100%;margin-top:5px;text-align:left;font-size:12px}a{color:#1b57a3}#googleKey{width:100%}</style></head>
+<body><header><h1>Site planning — buildings and imagery review</h1><div id="subtitle"></div></header><main><aside>
+<label>Map provider <select id="provider"><option value="osm">OpenStreetMap</option><option value="google">Google Maps road / satellite / terrain</option></select></label>
+<div class="small">Google requires your Maps JavaScript API key and enabled billing. Enter it for this page session; it is not saved.</div><input id="googleKey" type="password" autocomplete="off" placeholder="Google Maps API key"><button id="loadGoogle" style="margin-top:6px">Load Google map</button>
+<section><strong>Planning overlays</strong><label><input id="sites" type="checkbox" checked> Proposed sites</label><label><input id="airtel" type="checkbox" checked> Airtel inventory / reserved sites</label><label><input id="competitors" type="checkbox"> Competitor sites</label><label><input id="grids" type="checkbox"> Grids / KPI categories</label><label><input id="no_build" type="checkbox" checked> No-build polygons</label><label><input id="buildings" type="checkbox" checked> Open building footprints</label></section>
+<section><a href="planning_google_earth.kmz" download>Download Google Earth KMZ</a> · <a href="planning_map.html">Offline map</a><p class="small">Import the KMZ into Google Earth Pro or Earth web to inspect sites and building outlines on its imagery/terrain. Google Earth imagery is not downloaded or analysed by this application.</p></section>
+<div id="status" class="small">Loading OpenStreetMap viewer…</div><section><strong>Selected location</strong><div id="info" class="small"></div><p><a id="googleLink" target="_blank" rel="noopener">Open in Google Maps</a></p><a href="https://earth.google.com/web/" target="_blank" rel="noopener">Open Google Earth</a></section>
+<section class="small">Building outlines are mapped/inferred evidence, not certified roof or land suitability. Rooftop search points require structural, RF and acquisition review. Empty building coverage can reflect incomplete mapping. Existing/planned sites remain visible.</section><div id="sources" class="small"></div><section><strong>Ranked proposed sites</strong><div id="siteList"></div></section></aside><div id="view"><div id="osm" class="map"></div><div id="google" class="map"></div></div></main>
+<script>const D=__DATA__;
+const $=id=>document.getElementById(id);const keys=['sites','airtel','competitors','grids','buildings','no_build'];let osm=null,gm=null,googleLoaded=false,leafletLayers={},googleLayers={},selected=null;
+function color(p){if(p.layer==='no_build')return '#cf2939';if(p.layer==='sites')return '#772bc4';if(p.layer==='airtel')return p.planning_role==='Reserved pipeline'?'#dd6400':'#1465af';if(p.layer==='competitors')return '#505b68';return ({Red:'#dd3446',Amber:'#df9e12',Green:'#269b68',Grey:'#939ca8'})[p.category]||'#455974'}
+function selectFeature(f){selected=f;let p=f.properties;const text=Object.entries(p).map(([k,v])=>k+': '+(v===null?'Unknown':v)).join('\n');$('info').textContent=text;let xy=f.geometry.type==='Point'?f.geometry.coordinates:null;if(xy){$('googleLink').href='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(xy[1]+','+xy[0]);$('googleLink').textContent='Open selected location in Google Maps'}}
+function locate(f){selectFeature(f);let[lon,lat]=f.geometry.coordinates;if(osm)osm.setView([lat,lon],17);if(gm){gm.setCenter({lat,lng:lon});gm.setZoom(17)}}
+function osmInit(){if(!window.L){$('status').textContent='Leaflet could not load. Check internet/proxy, use Google Maps or open the offline map.';return}
+osm=L.map('osm',{preferCanvas:true}).setView([0,20],4);
+const tiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(osm);
+let failed=false;tiles.on('tileerror',()=>{if(!failed){failed=true;$('status').textContent='Some OSM tiles failed. Check connectivity/provider limits. Planning overlays remain available.'}});
+for(const key of keys){leafletLayers[key]=L.geoJSON(D.layers[key],{style:f=>({color:f.properties.layer==='grids'?color(f.properties):f.properties.layer==='no_build'?'#cf2939':'#79543b',weight:1,fillOpacity:.25}),pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:key==='sites'?6:key==='grids'?2:3,color:color(f.properties),weight:1,fillOpacity:.8}),onEachFeature:(f,layer)=>layer.on('click',()=>selectFeature(f))});if($(key).checked)leafletLayers[key].addTo(osm)}
+let positions=D.layers.sites.features.map(f=>[f.geometry.coordinates[1],f.geometry.coordinates[0]]);if(!positions.length)positions=D.layers.grids.features.filter(f=>f.geometry.type==='Point').map(f=>[f.geometry.coordinates[1],f.geometry.coordinates[0]]);if(positions.length)osm.fitBounds(positions,{padding:[35,35],maxZoom:16});
+$('status').textContent='OpenStreetMap online tiles. Footprints used: '+D.layers.buildings.features.length+'. No imagery extraction or terrain simulation.'}
+function syncLayers(){for(const key of keys){if(osm&&leafletLayers[key]){if($(key).checked)leafletLayers[key].addTo(osm);else osm.removeLayer(leafletLayers[key])}if(googleLayers[key])googleLayers[key].setMap($(key).checked?gm:null)}}
+function switchMap(value){$('osm').style.display=value==='osm'?'block':'none';$('google').style.display=value==='google'?'block':'none';if(value==='osm'&&osm)setTimeout(()=>osm.invalidateSize(),20);if(value==='google'&&!googleLoaded)$('status').textContent='Enter a Google Maps JavaScript API key and click Load Google map.'}
+window.gm_authFailure=()=>{$('status').textContent='Google API authorization failed. Check API enablement, billing and HTTP referrer restrictions for http://127.0.0.1:8765/*.'};
+window.initPlanningGoogle=()=>{try{let c=osm?osm.getCenter():{lat:0,lng:20};gm=new google.maps.Map($('google'),{center:{lat:c.lat,lng:c.lng},zoom:osm?osm.getZoom():5,mapTypeId:'hybrid',mapTypeControl:true});for(const key of keys){let layer=new google.maps.Data();layer.addGeoJson(D.layers[key]);layer.setStyle(feature=>({fillColor:key==='buildings'?'#c6a374':color({layer:key,category:feature.getProperty('category'),planning_role:feature.getProperty('planning_role')}),fillOpacity:key==='buildings'?.3:.75,strokeColor:key==='buildings'?'#67452b':'#4a4d63',strokeWeight:1,icon:['buildings','no_build'].includes(key)?null:{path:google.maps.SymbolPath.CIRCLE,scale:key==='sites'?6:key==='grids'?2:3,fillOpacity:.9,fillColor:color({layer:key,category:feature.getProperty('category'),planning_role:feature.getProperty('planning_role')}),strokeWeight:1}}));layer.addListener('click',e=>e.feature.toGeoJson(selectFeature));googleLayers[key]=layer}googleLoaded=true;syncLayers();$('status').textContent='Google Maps official API. Use its map-type control for road, satellite, hybrid or terrain. Imagery is visual context only.';if(selected)locate(selected)}catch(e){$('status').textContent='Google map initialization failed: '+e.message}};
+$('loadGoogle').onclick=()=>{if(googleLoaded){$('provider').value='google';switchMap('google');return}let key=$('googleKey').value.trim();if(!key){$('status').textContent='Provide your Google Maps API key. OSM and Google Earth export do not need it.';return}if(document.getElementById('googleApiScript')){$('status').textContent='Google API is already loading. If it failed, reload this page to retry.';return}$('provider').value='google';switchMap('google');let script=document.createElement('script');script.id='googleApiScript';script.async=true;script.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(key)+'&loading=async&callback=initPlanningGoogle&v=weekly';script.onerror=()=>{$('status').textContent='Google Maps script failed to load. Check connectivity and API setup.'};document.head.appendChild(script);$('googleKey').value=''};
+$('provider').onchange=e=>switchMap(e.target.value);for(const key of keys)$(key).onchange=syncLayers;
+$('subtitle').textContent=D.summary.country+' · '+D.summary.grid_period+' · '+D.summary.mode+' · '+D.summary.location_mode;
+$('sources').textContent='Building source: '+(D.building_metadata.source||'None loaded')+'; license: '+(D.building_metadata.license||'not supplied')+'. Showing '+D.layers.buildings.features.length+' of '+D.building_total+' input footprints (viewer cap 20,000; full footprints exported). '+(D.building_metadata.retrieved_utc?'Retrieved '+D.building_metadata.retrieved_utc:'');
+for(const f of D.layers.sites.features){const b=document.createElement('button');b.textContent=f.properties.rank+'. '+f.properties.candidate_id;b.onclick=()=>locate(f);$('siteList').appendChild(b)}
+let leaflet=document.createElement('script');leaflet.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';leaflet.onload=osmInit;leaflet.onerror=()=>osmInit();document.head.appendChild(leaflet);
+</script></body></html>'''

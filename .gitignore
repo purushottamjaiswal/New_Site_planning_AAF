@@ -1,0 +1,27 @@
+# Local Python environments and bytecode
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+# Operational data, local indices and generated results
+data/**
+!data/README.md
+!data/siting_templates/
+!data/siting_templates/*.csv
+outputs/
+validation_runs/
+example_outputs/
+building_cache/
+*.sqlite
+*.sqlite-*
+*.gpkg
+*.gdb/
+*.zip
+# Machine-local settings
+.env
+.env.*
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

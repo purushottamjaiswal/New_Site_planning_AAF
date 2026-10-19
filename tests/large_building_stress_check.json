@@ -1,0 +1,13 @@
+{
+  "fixture": "Synthetic stress test; not customer geography",
+  "source_records": 1000005,
+  "unique_indexed_polygons": 200001,
+  "source_bytes": 103052877,
+  "sqlite_bytes": 107585536,
+  "elapsed_seconds": 33.87,
+  "reuse_seconds": 0.12,
+  "peak_process_rss_mib_linux": 114.83,
+  "spatial_query_count": 427,
+  "source_cap_bypassed_by_building_disk_path": true,
+  "regional_200k_cap_not_applied": true
+}
