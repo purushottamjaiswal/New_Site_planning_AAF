@@ -5,6 +5,7 @@ import pandas as pd
 from planner import Rules,run_paths,plan_frames,save_plan
 from session_db import Session
 from test_planner import fixtures
+from mask_fixtures import run_paths
 from test_siting import candidates
 from stream_io import stream_source,source_layers
 

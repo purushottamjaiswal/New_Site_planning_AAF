@@ -10,6 +10,7 @@ from gis_io import read_source,list_layers,normalize_role,match_mapping,driver_r
 from buildings import load_buildings
 from planner import Rules,ALIASES,run_paths,save_plan,source_fingerprint
 from test_planner import fixtures
+from mask_fixtures import run_paths
 from test_siting import candidates
 
 POLY=Polygon([(1000,-20),(1050,-20),(1050,20),(1000,20),(1000,-20)])

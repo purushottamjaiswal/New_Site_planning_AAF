@@ -31,7 +31,7 @@ class Session:
         self.db.executescript('''CREATE TABLE inputs(rid INTEGER PRIMARY KEY,role TEXT,country TEXT,gid TEXT,size TEXT,period TEXT,payload TEXT,raw_data TEXT,geometry TEXT);
         CREATE INDEX input_scope ON inputs(role,country,period,size,gid); CREATE INDEX input_ids ON inputs(role,country,gid);
         CREATE TABLE issues(rid INTEGER PRIMARY KEY,payload TEXT);''')
-        for table in ('grids','airtel','competitors','infrastructure','buffers','no_build','demand','candidates','sites'):
+        for table in ('grids','airtel','competitors','infrastructure','buffers','no_build','land','water','demand','candidates','sites'):
             self.db.execute(f'CREATE TABLE {table}(rid INTEGER PRIMARY KEY,gid TEXT,lat REAL,lon REAL,payload TEXT,geometry TEXT)')
             self.db.execute(f'CREATE INDEX {table}_gid ON {table}(gid)')
             self.db.execute(f'CREATE VIRTUAL TABLE {table}_rt USING rtree(rid,minx,maxx,miny,maxy)')
@@ -95,16 +95,17 @@ class Session:
             self.check();self.log(f'Importing {role} into temporary database: {Path(path).name}')
             opt=options.get(role,{});mapping=None;count=0
             for data in stream_source(path,layer=opt.get('layer'),crs_override=opt.get('crs_override'),batch_size=self.batch_size,cancelled=self.cancelled):
-                if role=='no_build_polygons':
-                    if data.geometries is None:raise ValueError('No-build polygons require spatial polygon geometry.')
+                if role in ('no_build_polygons','land_polygons','water_polygons'):
+                    if data.geometries is None:raise ValueError(f'{role}: select a polygon layer with known CRS.')
                     for geom_index,geom in enumerate(data.geometries):
-                        if geom is None or geom.geom_type not in ('Polygon','MultiPolygon') or not geom.is_valid or geom.is_empty:raise ValueError('Invalid no-build polygon geometry; repair the source.')
+                        if geom is None or geom.geom_type not in ('Polygon','MultiPolygon') or not geom.is_valid or geom.is_empty:raise ValueError(f'{role}: invalid or non-polygon geometry; repair the source. River centre lines require an actual width-based polygon.')
                         w,south,e,n=geom.bounds
-                        if not(-180<=w<=e<=180 and -90<=south<=n<=90):raise ValueError('No-build polygon coordinates are not WGS84.')
+                        if not(-180<=w<=e<=180 and -90<=south<=n<=90):raise ValueError(f'{role}: polygon coordinates are not WGS84.')
                         properties=data.frame.iloc[geom_index].to_dict()
-                        self.db.execute('INSERT INTO inputs(role,country,gid,size,period,payload,raw_data,geometry) VALUES(?,?,?,?,?,?,?,?)',('no_build_polygons','',str(count),'','',encode(properties),encode(properties),json.dumps(geom_mapping(geom))))
-                        row={'id':str(count),'lat':geom.centroid.y,'lon':geom.centroid.x};rid=self.add('no_build',row,json.dumps(geom_mapping(geom)));w,s,e,n=geom.bounds
-                        self.db.execute('UPDATE no_build_rt SET minx=?,maxx=?,miny=?,maxy=? WHERE rid=?',(w,e,s,n,rid));count+=1
+                        if role=='no_build_polygons':self.db.execute('INSERT INTO inputs(role,country,gid,size,period,payload,raw_data,geometry) VALUES(?,?,?,?,?,?,?,?)',('no_build_polygons','',str(count),'','',encode(properties),encode(properties),json.dumps(geom_mapping(geom))))
+                        table={'no_build_polygons':'no_build','land_polygons':'land','water_polygons':'water'}[role]
+                        row={**properties,'id':str(count),'lat':geom.centroid.y,'lon':geom.centroid.x};rid=self.add(table,row,json.dumps(geom_mapping(geom)));w,s,e,n=geom.bounds
+                        self.db.execute(f'UPDATE {table}_rt SET minx=?,maxx=?,miny=?,maxy=? WHERE rid=?',(w,e,s,n,rid));count+=1
                 else:
                     if role not in ALIASES:raise ValueError('Unknown data source role: '+role)
                     if mapping is None:mapping,_=match_mapping(data.frame,role,mappings.get(role,ALIASES[role]),ALIASES[role])
@@ -119,10 +120,10 @@ class Session:
                         self.db.execute('INSERT INTO inputs(role,country,gid,size,period,payload,raw_data,geometry) VALUES(?,?,?,?,?,?,?,?)',
                             (role,row.get('country',''),row.get('id',''),row.get('size',''),row.get('period',''),encode(row),encode(raw[i]),geom))
                     count+=len(canon)
-                self.metadata[role]={**data.metadata,'mapping':effective if role!='no_build_polygons' else {},'records':count,'storage':'temporary SQLite'}
+                self.metadata[role]={**data.metadata,'mapping':effective if role not in ('no_build_polygons','land_polygons','water_polygons') else {},'records':count,'storage':'temporary SQLite'}
                 self.db.commit()
                 if count%20000<self.batch_size:self.log(f'{role}: {count:,} records stored')
-            if not count and role in ('grid','airtel','candidates'):raise ValueError(f'{role}: source is empty.')
+            if not count and role in ('grid','airtel','candidates','land_polygons','water_polygons'):raise ValueError(f'{role}: source is empty.')
         if paths.get('buildings'):
             from buildings import load_buildings
             opt=options.get('buildings',{});self.buildings=load_buildings(paths['buildings'],rules,self.cancelled,layer=opt.get('layer'),crs_override=opt.get('crs_override'),disk=True,cache_dir=self.folder/'building_index',log=self.log)

@@ -23,6 +23,11 @@ def map_data(plan):
         rows={r['id']:r for r in json.loads(plan.grids.to_json(orient='records'))}
         grid_features=[{'type':'Feature','geometry':mapping(g),'properties':{'layer':'grids',**rows[k]}} for k,g in context.grids.items() if k in rows]
         no_build=[{'type':'Feature','geometry':mapping(g),'properties':{'layer':'no_build','id':i+1}} for i,g in enumerate(context.exclusions)]
+    if not grid_features:
+        from terrain_masks import nominal_grid_polygon
+        from shapely.geometry import mapping
+        records=json.loads(plan.grids.to_json(orient='records'))
+        grid_features=[{'type':'Feature','geometry':mapping(nominal_grid_polygon(row['lat'],row['lon'],1000 if plan.rules.grid_size=='1km' else 3000)),'properties':{'layer':'grids',**row,'geometry_basis':'Reconstructed nominal cell from source centroid and grid size'}} for row in records]
     data={'summary':plan.summary,'layers':{
       'sites':feature_points(plan.sites,'sites'),
       'airtel':feature_points(plan.airtel,'airtel'),
@@ -92,7 +97,7 @@ class LocalMapServer:
                         from contextlib import closing
                         if planning_db is None:self.send_error(503,'Temporary planning database is no longer available. Use full exported files or embedded previews.');return
                         query=parse_qs(request.query);layer=query.get('layer',[''])[0]
-                        if layer not in ('sites','grids','airtel','competitors','no_build'):raise ValueError()
+                        if layer not in ('sites','grids','airtel','competitors','no_build','land','water'):raise ValueError()
                         bbox=tuple(map(float,query.get('bbox',[''])[0].split(',')))
                         if len(bbox)!=4 or not all(math.isfinite(v) for v in bbox):raise ValueError()
                         w,south,e,n=bbox

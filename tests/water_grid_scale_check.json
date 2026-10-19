@@ -1,0 +1,17 @@
+{
+  "fixture": "Synthetic source/selection stress trial; not operational network data",
+  "population_source_rows": 1010051,
+  "stored_input_rows": 1020103,
+  "target_grids": 10050,
+  "requested_sites": 12000,
+  "selected_sites": 10050,
+  "full_exported_sites": 10050,
+  "page_offset_10000_rows": 50,
+  "assigned_demand": 10050.0,
+  "sqlite_bytes": 321581056,
+  "peak_process_rss_mib_linux": 183.27,
+  "elapsed_seconds_including_generation_export": 35.17,
+  "import_batch_rows": 2000,
+  "selection": "Global lazy greedy; no global link list or heap in RAM",
+  "temporary_database_removed": true
+}

@@ -86,6 +86,12 @@ def prepare_grids_and_demand(s,r,paths,notes):
         row['candidate_exclusion']='Not an eligible demand grid' if not row['target'] else 'Grid site-present flag: assess optimization or upgrade' if r.respect_site_present and row['site_present'].lower() in ('yes','y','true','1') else 'Near active/pipeline Airtel site: assess optimization or upgrade' if row['nearest_airtel_km']<r.min_airtel_km else ''
         row['status']='Not Red/Amber' if not poor else 'Missing/invalid/zero demand' if not good else 'Below minimum population density' if not density else 'Unassigned target'
         row.update(assigned_candidate='',assignment_distance_km=None,assigned_demand=0.,assigned_fraction=0.,assigned_site_count=0)
+        if geometry:row['geometry_basis']='Supplied grid polygon; preserved'
+        else:
+            from terrain_masks import nominal_grid_polygon
+            from shapely.geometry import mapping
+            geometry=encode(mapping(nominal_grid_polygon(row['lat'],row['lon'],1000 if r.grid_size=='1km' else 3000)))
+            row['geometry_basis']='Reconstructed nominal cell from source centroid and grid size'
         s.add('grids',row,geometry)
         if index%2000==1999:s.db.commit();s.log(f'Prepared {index+1:,} grids on disk')
     if not s.count('grids'):raise ValueError('No valid grids match country, resolution and snapshot.')
@@ -146,6 +152,9 @@ def prepare_candidates(s,r,notes):
         if s.buildings is not None:
             frame=pd.DataFrame(batch);s.buildings.annotate(frame,r);batch=frame.to_dict('records')
         for row in batch:
+            # Always retain the water rejection, including when building screening also rejects.
+            water_reason=row.pop('_water_rejection','')
+            if water_reason:row['rejection']=water_reason
             rid=s.add('candidates',row);s.db.execute('UPDATE candidates SET allowed=? WHERE rid=?',(int(not row['rejection']),rid))
         s.db.commit()
     batch=[];processed=0
@@ -169,8 +178,11 @@ def prepare_candidates(s,r,notes):
             row['offset_from_grid_centroid_m']=distance(row['lat'],row['lon'],g['lat'],g['lon'])*1000
             if geometry:
                 if not shape(json.loads(geometry)).covers(Point(row['lon'],row['lat'])):row['rejection']='Outside actual parent grid polygon'
-                row['polygon_constraint_check']='Actual parent grid boundary checked'
+                row['polygon_constraint_check']=('Actual parent grid boundary checked' if g.get('geometry_basis','').startswith('Supplied') else 'Nominal reconstructed parent grid footprint checked')
             elif row['offset_from_grid_centroid_m']>side/math.sqrt(2)+10:row['rejection']='Outside nominal parent-grid envelope; verify grid assignment'
+        from terrain_masks import screen_water
+        water_reason=screen_water(s,row);row['water_screening']='Rejected: '+water_reason if water_reason else 'Passed supplied land and water polygons'
+        row['_water_rejection']=water_reason
         nearest_fields(s,row)
         if row['nearest_airtel_km']<r.min_airtel_km:row['rejection']='Too near active/reserved Airtel site'
         if parent and r.respect_site_present and g['site_present'].lower() in ('yes','true','y','1'):row['rejection']='Parent grid site-present flag'
@@ -239,9 +251,13 @@ def select_sites(s,r):
 def run_database(paths,rules,mappings=None,log=print,cancelled=lambda:False,source_options=None):
     rules.validate()
     if not all(paths.get(role) for role in ('grid','airtel','competitor')):raise ValueError('Load grid, Airtel and competitor source files.')
+    missing=[role for role in ('land_polygons','water_polygons') if not paths.get(role)]
+    if missing:raise ValueError('Water protection requires Land polygons and Water polygons covering the planning area. Select coastal land boundaries plus rivers/lakes/lagoons in Data sources. Missing: '+', '.join(missing))
     s=Session(log,cancelled,rules.import_batch_size)
     try:
-        s.ingest(paths,rules,mappings,source_options);prepare_references(s,rules);notes=[];prepare_grids_and_demand(s,rules,paths,notes)
+        s.ingest(paths,rules,mappings,source_options)
+        if not s.count('land') or not s.count('water'):raise ValueError('Land and water polygon layers must be nonempty. Water screening cannot be skipped.')
+        prepare_references(s,rules);notes=[];prepare_grids_and_demand(s,rules,paths,notes)
         if s.buildings is not None:
             w,south,e,n=s.buildings.bounds;bounds=s.db.execute('SELECT min(lon),min(lat),max(lon),max(lat) FROM grids').fetchone()
             if e<bounds[0] or w>bounds[2] or n<bounds[1] or south>bounds[3]:raise ValueError('Building extent does not overlap the selected grid scope.')
@@ -252,10 +268,10 @@ def run_database(paths,rules,mappings=None,log=print,cancelled=lambda:False,sour
         periods=[row[0] for row in s.db.execute("SELECT DISTINCT json_extract(payload,'$.period') FROM competitors ORDER BY 1")]
         if rules.mode=='MR preview':notes.append('MR counts are a proxy, not population, unique users, traffic or revenue.')
         if s.buildings:notes.append(f'{s.buildings.count:,} footprints stored in a temporary building index; no building counts converted into population.')
-        notes.extend(['Global lazy-greedy marginal demand; distance assumptions do not predict RF coverage.','A run may stop before its site target when incremental demand or feasible spaced locations are exhausted.','All large source tables and working queues are on disk. Only bounded import, geometry and display batches are materialized.'])
+        notes.extend(['All selected coordinates passed supplied land and water polygon checks. Water/coastline source resolution and completeness still govern screening accuracy.','Grid polygons are preserved when supplied; CSV centres generate nominal 1 km/3 km footprints consistently across viewers and exports.','Global lazy-greedy marginal demand; distance assumptions do not predict RF coverage.','A run may stop before its site target when incremental demand or feasible spaced locations are exhausted.','All large source tables and working queues are on disk. Only bounded import, geometry and display batches are materialized.'])
         summary={'mode':rules.mode,'country':rules.country,'grid_size':rules.grid_size,'grid_period':rules.grid_period,'airtel_period':rules.airtel_period,'competitor_periods':periods,'grid_count':s.count('grids'),'target_grids':scalar("SUM(json_extract(payload,'$.target'))") or 0,'eligible_locations':eligible,'location_mode':rules.location_mode,'proposed_sites':s.count('sites'),'assigned_grids':s.count('selected_stats'),
             'unassigned_target_grids':scalar('COUNT(*)',where="json_extract(payload,'$.target')=1 AND json_extract(payload,'$.assigned_fraction')<.995"),'incremental_demand_total':scalar('COALESCE(SUM(total),0)','selected_stats'),'target_demand_total':scalar("COALESCE(SUM(json_extract(payload,'$.demand')),0)",where="json_extract(payload,'$.target')=1"),'demand_unit':'people (radius opportunity estimate)' if rules.mode=='Population' else 'MR records (proxy, NOT population or unique users)',
-            'population_missing_poor_grids':scalar('COUNT(*)',where="json_extract(payload,'$.category') IN ('Red','Amber') AND json_extract(payload,'$.population') IS NULL") if rules.mode=='Population' else None,'invalid_coordinate_rows':scalar('COUNT(*)','issues',"json_extract(payload,'$.reason') LIKE '%coordinates%'"),'notes':notes,'method':'Global disk-backed lazy-greedy selection; exact spherical radius queries','storage':'temporary SQLite','database_path':str(s.path),'map_preview_limits':{'sites':500,'grids':5000,'inventory_each':5000}}
+            'population_missing_poor_grids':scalar('COUNT(*)',where="json_extract(payload,'$.category') IN ('Red','Amber') AND json_extract(payload,'$.population') IS NULL") if rules.mode=='Population' else None,'invalid_coordinate_rows':scalar('COUNT(*)','issues',"json_extract(payload,'$.reason') LIKE '%coordinates%'"),'notes':notes,'method':'Global disk-backed lazy-greedy selection; exact spherical radius queries','water_screening':'Required land + water polygon screening applied','storage':'temporary SQLite','database_path':str(s.path),'map_preview_limits':{'sites':500,'grids':5000,'inventory_each':5000}}
         from database_result import DatabaseResult
         result=DatabaseResult(s,rules,summary);log(f'Complete: {summary["proposed_sites"]:,} sites planned; working database stays temporary until results are closed.');return result
     except BaseException:s.close();raise

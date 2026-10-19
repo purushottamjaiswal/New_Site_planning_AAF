@@ -60,8 +60,10 @@ class DatabaseResult:
                     f.write(encode(feature));first=False
                 f.write(']}')
         geojson('proposed_sites.geojson','sites');geojson('grid_assessment_spatial.geojson','grids',True)
+        geojson('land_polygons_used.geojson','land',True);geojson('water_polygons_used.geojson','water',True)
         if s.count('no_build'):geojson('no_build_polygons_used.geojson','no_build',True)
         if self.buildings_context:self.buildings_context.export_geojson(folder/'building_footprints_used.geojson')
+        self.summary['grid_bounds']=s.db.execute('SELECT min(minx),min(miny),max(maxx),max(maxy) FROM grids_rt').fetchone()
         metadata={'rules':asdict(self.rules),'summary':self.summary,'sources':{key:source_fingerprint(path) for key,path in (paths or {}).items() if path},'source_layers_and_crs':self.input_metadata,'temporary_database':str(s.path),'temporary_database_lifecycle':'Removed when this result/session is closed. Full output tables are already exported. Map viewport endpoints require the active session.'}
         (folder/'run_settings.json').write_text(json.dumps(clean(metadata),indent=2,allow_nan=False),encoding='utf-8')
         # Only bounded frames reach the legacy HTML renderers.
@@ -72,7 +74,7 @@ class DatabaseResult:
                 if col not in frame:frame[col]=pd.Series(dtype=object)
         polygon_grids={row['id']:shape(json.loads(geom)) for _,row,geom in s.records('grids',limit=5000) if geom}
         exclusions=[shape(json.loads(geom)) for _,_,geom in s.records('no_build',limit=5000)]
-        preview_summary={**self.summary,'notes':self.summary['notes']+['Static map previews: up to 500 planned sites, 5,000 grids and 5,000 records per inventory. Full CSV/GeoJSON exports include every result; live OpenLayers viewport queries retrieve local records.']}
+        preview_summary={**self.summary,'notes':self.summary['notes']+['Initial map previews: up to 500 planned sites, 5,000 grids and 5,000 records per inventory. Full CSV/GeoJSON exports include every result; live offline/OpenLayers viewport queries retrieve local records.']}
         preview=SimpleNamespace(sites=sites,grids=grids,airtel=airtel,competitors=comp,demand_points=pd.DataFrame(columns=['basis','point_id','grid_id','lat','lon','demand','assigned_candidate']),summary=preview_summary,rules=self.rules,buildings_context=self.buildings_context,polygon_context=SimpleNamespace(grids=polygon_grids,exclusions=exclusions))
         from map_report import write_map
         from web_maps import write_web_map

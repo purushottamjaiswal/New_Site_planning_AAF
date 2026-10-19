@@ -1,15 +1,21 @@
 # New Site Planning AAF — standalone desktop application
 
-Version 6.0. A local Python/Tkinter application for evaluating telecom site locations from Red/Amber coverage and speed grids, population or MR demand, existing Airtel sites, competitor context and building footprints. It runs outside QGIS.
+Version 6.1. A local Python/Tkinter application for evaluating telecom site locations from Red/Amber coverage and speed grids, population or MR demand, existing Airtel sites, competitor context and building footprints. It runs outside QGIS.
 
 This repository contains application source, synthetic tests and input templates. Operational telecom datasets, generated planning reports and building caches are not included. Select your own files in the UI; the initial data paths are placeholders for local inputs.
+
+## Required water protection and grid update
+
+New runs require **Land polygons** and **Water polygons** in Data sources. The tool rejects locations outside/on the coastal land boundary or inside/on water polygons. It stops when either source is missing or empty. Use current, sufficiently detailed coastal land and inland-water evidence covering the full planning area, including rivers and Lagos lagoon. Generic country outlines or ocean-only polygons do not establish inland-water coverage. Buildings and background imagery do not provide this evidence. Existing scenarios must add these paths and be rerun. See [WATER_AND_GRID_GUIDE.md](WATER_AND_GRID_GUIDE.md).
+
+All grid records now have polygon footprints. Supplied grid polygons remain unchanged. CSV-only grids use nominal 1 km or 3 km squares reconstructed around their source centroids, with explicit geometry provenance. All viewers and the full grid GeoJSON use these footprints.
 
 ## Run on Windows
 
 1. Clone or download this repository and extract it into a writable folder.
 2. Install ordinary Python with Tkinter (Python 3.12 or 3.13 is a practical choice).
 3. Double-click **Start_Planner.bat**. It creates a local `.venv` and installs `requirements.txt`.
-4. Choose your input files under **Data sources** and **Buildings / maps**. Inspect their layers/CRS and confirm field mappings.
+4. Choose your inputs, including Land polygons and Water polygons, under **Data sources** and optional building footprints under **Buildings / maps**. Inspect their layers/CRS and confirm field mappings.
 5. Select country, grid resolution, snapshots and planning rules, then click **Run planning**.
 
 Alternatively, from an Anaconda Prompt or terminal in the repository folder:
@@ -76,7 +82,7 @@ Use Population mode only with real population data. **MR preview** is a proxy de
 
 **Results → OpenLayers / Google maps** provides Google Road/Satellite XYZ backgrounds and OpenStreetMap with site, grid, exclusion and building overlays. Online assets/tiles require connectivity and provider access. The alternate `planning_web_map.html` uses the official Google Maps JavaScript API with a user-supplied API key.
 
-The local map server binds to `127.0.0.1:8765`. Keep the desktop app running for viewport footprint queries. Viewport responses display at most 5,000 features per layer and explicitly flag truncation; zoom in for detail. This display cap does not limit planning. Sites, grids, inventory and footprints are queried from the active temporary databases.
+The local map server binds to `127.0.0.1:8765`. Both **Open interactive offline map** and **OpenLayers / Google maps** use the local server for viewport queries. The offline viewer needs no internet tiles or external scripts. Keep the desktop app running to query areas beyond its initial embedded preview. Viewport responses display at most 5,000 features per layer and explicitly flag truncation; zoom in for detail. This display cap does not limit planning. Sites, grids, inventory and footprints are queried from the active temporary databases.
 
 Each run creates a separate output folder with proposed-site CSV/GeoJSON, candidate assessments, demand assignments, settings/provenance, spatial constraints, full streaming footprint GeoJSON, an offline map and Google Earth KML/KMZ. Static previews contain at most 500 planned sites, 5,000 grids and 5,000 records per inventory; building previews are capped at 5,000 footprints. Static previews state these limits. Earth streams every site/inventory point and up to 5,000 building footprints; full footprint geometry remains in GeoJSON. Earth imagery/terrain are reviewed externally, not ingested automatically.
 
@@ -88,7 +94,7 @@ Edit `examples/scenario_NG_buildings.json` to point to your own datasets, select
 python planner.py --config examples/scenario_NG_buildings.json
 ```
 
-Blank optional paths disable those sources. Paths are relative to the working directory. See `data/siting_templates` for candidate, detailed-demand, infrastructure and exclusion-buffer headers.
+Land and water polygon paths are mandatory. Blank optional paths disable the other optional sources. Paths are relative to the working directory. See `data/siting_templates` for candidate, detailed-demand, infrastructure and exclusion-buffer headers.
 
 ## Validation
 
@@ -96,4 +102,4 @@ Blank optional paths disable those sources. Paths are relative to the working di
 python -m unittest discover -s tests -v
 ```
 
-The 66-test synthetic suite covers input formats, reprojection, polygon topology, demand reconciliation, siting constraints, database/reference-engine agreement, cleanup and map endpoints. A measured scale trial imported 1,010,051 population rows, selected/exported 10,050 sites and peaked at 148.71 MiB Linux process RSS for that fixture. These are measurements, not fixed resource guarantees. The native geometry smoke check (`python tests/ui_resize_smoke.py`) requires a display; under Linux it can use Xvfb. See `VALIDATION.md` for measured checks and limits.
+The synthetic regression suite covers input formats, reprojection, polygon topology, demand reconciliation, siting constraints, database/reference-engine agreement, cleanup and map endpoints. A measured scale trial imported 1,010,051 population rows, selected/exported 10,050 sites and peaked at 148.71 MiB Linux process RSS for that fixture. These are measurements, not fixed resource guarantees. The native geometry smoke check (`python tests/ui_resize_smoke.py`) requires a display; under Linux it can use Xvfb. See `VALIDATION.md` for measured checks and limits.

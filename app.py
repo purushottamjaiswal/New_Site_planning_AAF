@@ -19,12 +19,12 @@ ROOT=Path(__file__).resolve().parent
 
 class App(tk.Tk):
     def __init__(self):
-        super().__init__();self.title('Airtel Africa | New Site Planning')
+        super().__init__();self.title('Airtel Africa | New Site Planning v6.1')
         width,height=initial_window_size(self.winfo_screenwidth(),self.winfo_screenheight())
         self.geometry(f'{width}x{height}+20+20');self.minsize(min(680,width),min(420,height));self.resizable(True,True)
         self.columnconfigure(0,weight=1);self.rowconfigure(1,weight=1);self.page_hosts={}
         self.messages=queue.Queue();self.cancelled=threading.Event();self.busy=False;self.last_folder=None;self.web_server=None
-        self.current_result=None;self.page_offset=0;self.closing=False;self.source_options={};self.profile_active=None;self.paths={};self.maps={};self.mapboxes={};self.values={};self.summary=tk.StringVar(value='Load sources, select country and resolution, then run planning.')
+        self.current_result=None;self.page_offset=0;self.closing=False;self.source_options={};self.profile_active=None;self.paths={};self.maps={};self.mapboxes={};self.values={};self.summary=tk.StringVar(value='Load sources including required land/water polygons, select scope, then run planning.')
         style=ttk.Style(self);style.theme_use('clam');style.configure('TButton',padding=7);style.configure('Title.TLabel',font=('Segoe UI',19,'bold'));style.configure('TLabelframe.Label',font=('Segoe UI',10,'bold'))
         top=ttk.Frame(self,padding=(16,8));top.grid(row=0,column=0,sticky='ew');top.columnconfigure(0,weight=1)
         ttk.Label(top,text='New Site Planning',style='Title.TLabel').grid(row=0,column=0,sticky='w')
@@ -93,7 +93,7 @@ class App(tk.Tk):
     def build_inputs(self):
         ttk.Label(self.inputs,text='Select grid, Airtel site master and competitor inputs. Confirm their snapshots before planning.').pack(anchor='w')
         ttk.Label(self.inputs,text='Load real population by grid for Population mode; MR preview uses a proxy. Inputs are staged in temporary databases when planning starts.').pack(anchor='w',pady=(4,10))
-        files={'grid':'Postgres_Sep_2026(1).csv','airtel':'Sep_26_SM.csv','competitor':'Comp_data.csv','population':('Population_for_Site_Planner.csv' if (ROOT/'data/Population_for_Site_Planner.csv').exists() else ''),'candidates':'','demand_points':'','exclusions':'','infrastructure':'','no_build_polygons':''}
+        files={'grid':'Postgres_Sep_2026(1).csv','airtel':'Sep_26_SM.csv','competitor':'Comp_data.csv','population':('Population_for_Site_Planner.csv' if (ROOT/'data/Population_for_Site_Planner.csv').exists() else ''),'candidates':'','demand_points':'','exclusions':'','infrastructure':'','no_build_polygons':'','land_polygons':'','water_polygons':''}
         area=ttk.Frame(self.inputs);area.pack(fill='x')
         for i,(kind,filename) in enumerate(files.items()):
             v=tk.StringVar(value=str(ROOT/'data'/filename) if filename else '');self.paths[kind]=v
@@ -113,7 +113,7 @@ class App(tk.Tk):
                 cb=ttk.Combobox(panel,textvariable=v,width=30);cb.grid(row=row,column=column+1,sticky='ew',padx=(0,20),pady=4)
                 self.mapboxes[kind][key]=cb
         ttk.Button(self.inputs,text='Create population template for selected country / resolution',command=self.template).pack(anchor='w')
-        ttk.Label(self.inputs,text='Optional siting inputs: candidates = feasible tower/rooftop/parcel coordinates; demand_points = finer population/MR points;\nexclusions = circular no-build buffers; infrastructure = Road, Backhaul or Power reference points. Templates are in data/siting_templates.',wraplength=1050).pack(anchor='w',pady=12)
+        ttk.Label(self.inputs,text='Required water protection: Land polygons = coastal dry-land boundary; Water polygons = rivers, lakes, lagoons and other water areas. Sources must cover your planning area.\nOptional siting inputs: candidates = feasible tower/rooftop/parcel coordinates; demand_points = finer population/MR points;\nexclusions = circular no-build buffers; infrastructure = Road, Backhaul or Power reference points. Templates are in data/siting_templates.',wraplength=1050).pack(anchor='w',pady=12)
         self.source_info=tk.StringVar(value='Standalone GIS/table reader: CSV, SHP, GPKG, KML/KMZ, GeoJSON/Esri JSON, FileGDB and installed GDAL vector drivers. Use Source layers / CRS to select internal layers.')
         ttk.Label(self.inputs,textvariable=self.source_info,wraplength=1100).pack(anchor='w',pady=8)
 
@@ -503,7 +503,13 @@ class App(tk.Tk):
         self.after(100,self.poll)
 
     def open_map(self):
-        if self.last_folder:webbrowser.open((self.last_folder/'planning_map.html').resolve().as_uri())
+        if self.last_folder:
+            try:
+                from web_maps import LocalMapServer
+                if self.web_server:self.web_server.close()
+                self.web_server=LocalMapServer(self.last_folder)
+                webbrowser.open(self.web_server.url.replace('planning_openlayers_map.html','planning_map.html'))
+            except Exception as exc:messagebox.showerror('Offline map',str(exc))
         else:messagebox.showinfo('Map','Run planning first.')
 
     def open_folder(self):

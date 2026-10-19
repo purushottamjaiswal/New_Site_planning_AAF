@@ -178,7 +178,7 @@ SITE_COLUMNS=['rank','candidate_id','country','grid_id','lat','lon','category','
  'nearest_airtel_id','nearest_competitor_km','nearest_competitor_id','nearest_competitor_operator',
  'nearest_competitor_period','demand_unit','reason','assigned_points','source_candidate_id','location_basis',
  'location_source','location_status','survey_verified','accuracy_m','offset_from_grid_centroid_m',
- 'demand_basis','suitability','nearest_road_km','nearest_backhaul_km','nearest_power_km','mapped_buildings_within_radius','mapped_footprint_area_m2','nearest_mapped_building_m','containing_building_id','containing_building_area_m2','building_factor','building_context']
+ 'demand_basis','suitability','nearest_road_km','nearest_backhaul_km','nearest_power_km','mapped_buildings_within_radius','mapped_footprint_area_m2','nearest_mapped_building_m','containing_building_id','containing_building_area_m2','building_factor','building_context','water_screening']
 
 @dataclass
 class Plan:

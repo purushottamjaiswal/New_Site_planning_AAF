@@ -2,6 +2,7 @@ import sys,time,tempfile,csv,json,resource
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from planner import Rules,run_paths,save_plan
+from mask_fixtures import masks
 start=time.monotonic()
 with tempfile.TemporaryDirectory(prefix='aaf_scale_check_') as td:
  root=Path(td);paths={}
@@ -19,7 +20,7 @@ with tempfile.TemporaryDirectory(prefix='aaf_scale_check_') as td:
  write('population',['opco','grid_id','population'],population())
  print('Fixture: 1,010,051 population rows; 10,050 target grids',flush=True)
  r=Rules(max_sites=12000,max_candidate_points=20000,location_mode='Grid centroid (legacy)',service_radius_km=.05,min_new_km=.1,min_airtel_km=.1,min_incremental=1,import_batch_size=2000)
- result=run_paths(paths,r,log=lambda s:print(s,flush=True))
+ result=run_paths({**masks(root),**paths},r,log=lambda s:print(s,flush=True))
  try:
   assert len(result.sites)==10050,result.summary
   assert result.summary['incremental_demand_total']==10050
@@ -31,4 +32,4 @@ with tempfile.TemporaryDirectory(prefix='aaf_scale_check_') as td:
   report={'fixture':'Synthetic source/selection stress trial; not operational network data','population_source_rows':1010051,'stored_input_rows':input_rows,'target_grids':10050,'requested_sites':12000,'selected_sites':len(result.sites),'full_exported_sites':exported,'page_offset_10000_rows':50,'assigned_demand':result.summary['incremental_demand_total'],'sqlite_bytes':bytes_db,'peak_process_rss_mib_linux':round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024,2),'elapsed_seconds_including_generation_export':round(time.monotonic()-start,2),'import_batch_rows':2000,'selection':'Global lazy greedy; no global link list or heap in RAM'}
  finally:result.close()
  report['temporary_database_removed']=not dbpath.exists();assert report['temporary_database_removed']
- Path(__file__).with_name('database_scale_check.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2),flush=True)
+ Path(__file__).with_name('water_grid_scale_check.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2),flush=True)
