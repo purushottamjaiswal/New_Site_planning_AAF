@@ -13,6 +13,26 @@ class DiskIndexTests(unittest.TestCase):
         polygons=[Polygon([(.0098,-.0002),(.0102,-.0002),(.0102,.0002),(.0098,.0002)]),Polygon([(5,5),(5.001,5),(5.001,5.001),(5,5.001)])]
         features=[{'type':'Feature','properties':{'building_id':str(i),'confidence':.9},'geometry':mapping(g)} for i,g in enumerate(polygons)]
         p.write_text(json.dumps({'type':'FeatureCollection','features':features+[features[0]]}));return p,features
+    def test_building_read_batch_is_separate_and_saved_in_metadata(self):
+        from unittest.mock import patch
+        from building_stream import building_chunks
+        rules=Rules()
+        self.assertEqual(rules.building_import_batch_size,400000)
+        self.assertEqual(rules.import_batch_size,2000)
+        rules.validate()
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);p,_=self.source(root)
+            with patch('building_stream.building_chunks',wraps=building_chunks) as reader:
+                ctx=load_buildings(p,rules,disk=True,cache_dir=root/'cache')
+            self.assertEqual(reader.call_args.kwargs['chunk_size'],400000)
+            self.assertEqual(ctx.metadata['import_batch_rows'],400000)
+            self.assertEqual(ctx.count,2)
+            self.assertEqual(len(list(ctx.iter_features())),2)
+        for value in (99,400001,True,400000.0):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                Rules(building_import_batch_size=value).validate()
+        Rules(building_import_batch_size=100).validate()
+
     def test_disk_dedupe_large_extent_cache_and_export(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);p,features=self.source(root);cache=root/'cache'

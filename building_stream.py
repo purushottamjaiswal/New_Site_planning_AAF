@@ -6,7 +6,7 @@ from shapely.geometry import shape,box,Polygon,MultiPolygon
 from gis_io import Dataset,iter_source,_reproject
 
 
-def building_chunks(path,layer=None,crs_override=None,bbox=None,cancelled=lambda:False,chunk_size=2000):
+def building_chunks(path,layer=None,crs_override=None,bbox=None,cancelled=lambda:False,chunk_size=400000):
     path=Path(path)
     # GeoJSON feature arrays can be streamed without loading a whole JSON document.
     if path.suffix.lower() in ('.json','.geojson'):

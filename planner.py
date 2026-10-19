@@ -58,6 +58,7 @@ class Rules:
     min_incremental: float = 1.0
     max_sites: int = 30
     import_batch_size: int = 2000
+    building_import_batch_size: int = 400000
     reserve_planned: bool = True
     respect_site_present: bool = True
 
@@ -94,6 +95,7 @@ class Rules:
             raise ValueError('Search spacing must be between 100 and 3000 metres. It is not an accuracy claim.')
         if not isinstance(self.max_candidate_points,int) or self.max_candidate_points<1:raise ValueError('Maximum candidate alternatives must be a positive integer.')
         if not isinstance(self.import_batch_size,int) or not 100<=self.import_batch_size<=20000:raise ValueError('Import batch size must be 100–20,000 rows.')
+        if isinstance(self.building_import_batch_size,bool) or not isinstance(self.building_import_batch_size,int) or not 100<=self.building_import_batch_size<=400000:raise ValueError('Building import batch size must be 100–400,000 rows.')
         if not math.isfinite(self.distance_decay) or not 0<=self.distance_decay<=10:raise ValueError('Distance-decay strength must be 0–10.')
         if self.mode not in ('Population','MR preview'):
             raise ValueError('Choose Population or MR preview.')

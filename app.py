@@ -178,7 +178,7 @@ class App(tk.Tk):
         ttk.Entry(row,textvariable=self.paths['buildings']).pack(side='left',fill='x',expand=True)
         ttk.Button(row,text='Load footprint file',command=self.browse_buildings).pack(side='left',padx=5)
         settings=ttk.LabelFrame(self.building_tab,text='Planning evidence rules',padding=12);settings.pack(fill='x',pady=8)
-        items=[('building_storage','Building storage',['Disk index']),('building_rule','Building rule',['Ground clearance','Context only','Rooftop search']),
+        items=[('building_storage','Building storage',['Disk index']),('building_import_batch_size','Building import batch rows (100–400,000)',None),('building_rule','Building rule',['Ground clearance','Context only','Rooftop search']),
           ('building_clearance_m','Ground-site footprint clearance (m)',None),('building_context_radius_m','Mapped building context radius (m)',None),
           ('building_density_boost','Maximum mapped-density score boost',None),('building_min_confidence','Minimum supplied detection confidence',None),
           ('min_roof_area_m2','Minimum footprint area for roof review (m²)',None),('building_clip_bbox','Optional clip bbox: south,west,north,east',None)]
@@ -197,7 +197,7 @@ class App(tk.Tk):
         links=ttk.Frame(self.building_tab);links.pack(fill='x',pady=6)
         ttk.Button(links,text='Google Open Buildings downloads',command=lambda:webbrowser.open('https://sites.research.google/gr/open-buildings/')).pack(side='left')
         ttk.Button(links,text='Open Google Earth',command=lambda:webbrowser.open('https://earth.google.com/web/')).pack(side='left',padx=8)
-        ttk.Label(self.building_tab,text='Supported building data: regional GPKG, SHP, complete GDB or readable GDBTABLE, KML/KMZ, GeoJSON/Esri JSON, and WKT CSV/CSV.GZ. Choose the polygon layer in Source layers / CRS. Input rows and spatial indices are staged in temporary databases; screening and exports use bounded batches. Temporary data is removed when results are closed. Rooftop search generates unverified footprint interior points when Location method is Area search; supplied candidates retain their original coordinates. OpenLayers provides Google Road/Satellite and OSM backgrounds; the alternate Google API viewer requires its key. Earth review uses exported KML/KMZ. No rooftop strength, imagery extraction or terrain propagation is inferred.',wraplength=1070,justify='left').pack(anchor='w',pady=8)
+        ttk.Label(self.building_tab,text='Supported building data: regional GPKG, SHP, complete GDB or readable GDBTABLE, KML/KMZ, GeoJSON/Esri JSON, and WKT CSV/CSV.GZ. Choose the polygon layer in Source layers / CRS. Input rows and spatial indices are staged in temporary databases; screening and exports use bounded batches. Building imports default to 400,000 rows per read batch; reduce this for complex polygons or limited RAM. Other inputs retain their separate batch setting. Temporary data is removed when results are closed. Rooftop search generates unverified footprint interior points when Location method is Area search; supplied candidates retain their original coordinates. OpenLayers provides Google Road/Satellite and OSM backgrounds; the alternate Google API viewer requires its key. Earth review uses exported KML/KMZ. No rooftop strength, imagery extraction or terrain propagation is inferred.',wraplength=1070,justify='left').pack(anchor='w',pady=8)
 
     def browse_buildings(self):
         if self.busy:return

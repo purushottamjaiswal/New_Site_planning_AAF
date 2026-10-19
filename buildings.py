@@ -194,19 +194,22 @@ def _read_buildings(path,rules,cancelled=lambda:False,layer=None,crs_override=No
                 if isinstance(obj,dict):metadata.update(obj.get('metadata',{}))
             except (ValueError,UnicodeDecodeError):pass
         offset=0
-        for data in building_chunks(path,layer=layer,crs_override=crs_override,bbox=clip,cancelled=cancelled):
+        metadata['import_batch_rows']=rules.building_import_batch_size
+        log(f'Building read batch: {rules.building_import_batch_size:,} rows (other input batches are separate).')
+        for data in building_chunks(path,layer=layer,crs_override=crs_override,bbox=clip,cancelled=cancelled,chunk_size=rules.building_import_batch_size):
             metadata.update({k:v for k,v in data.metadata.items() if k not in ('source',)})
             metadata.setdefault('source','User-supplied open building dataset')
             if data.geometries is None and 'geometry' not in data.frame:
                 raise ValueError('Selected building layer has no polygon geometry/WKT. Choose a building feature class, not a non-spatial or system table.')
-            rows=data.frame.to_dict('records')
-            for i,props in enumerate(rows):
+            columns=list(data.frame.columns)
+            for i,values in enumerate(data.frame.itertuples(index=False,name=None)):
+                props=dict(zip(columns,values))
                 if (offset+i)%1000==0 and cancelled():raise InterruptedError('Building import cancelled.')
                 geom=data.geometries[i] if data.geometries is not None else None
                 if geom is not None:accept(mapping(geom),props,offset+i+1)
                 elif isinstance(props.get('geometry'),str):accept(props.pop('geometry'),props,offset+i+1)
                 else:accept(None,props,offset+i+1)
-            offset+=len(rows)
+            offset+=len(data.frame)
             log(f'Building import: {offset:,} source records processed')
     if sink:return metadata,issues
     # Remove repeated geometry without doubling mapped density; retain first provenance.
