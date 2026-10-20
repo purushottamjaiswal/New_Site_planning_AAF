@@ -81,8 +81,10 @@ class LocalMapServer:
         try:
             settings=json.loads((folder/'run_settings.json').read_text())
             planning_db=settings.get('result_database') or settings.get('temporary_database') or settings.get('summary',{}).get('database_path')
+            if planning_db and not Path(planning_db).is_absolute():planning_db=str(folder/planning_db)
             if planning_db and not Path(planning_db).is_file():planning_db=None
             candidate=settings.get('source_layers_and_crs',{}).get('buildings',{}).get('index_path')
+            if candidate and not Path(candidate).is_absolute():candidate=str(folder/candidate)
             if candidate and Path(candidate).is_file():
                 from building_index import DiskBuildingContext
                 index=DiskBuildingContext(candidate)

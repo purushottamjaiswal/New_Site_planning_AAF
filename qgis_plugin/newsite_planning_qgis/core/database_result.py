@@ -74,10 +74,10 @@ class DatabaseResult:
             project_path=save_project(s,folder,self.rules,paths or {})
             self.summary['project_database']=str(project_path)
         if project_path and self.buildings_context:
-            self.input_metadata={**self.input_metadata,'buildings':{**self.input_metadata.get('buildings',{}),'index_path':str(folder/'building_index.sqlite')}}
+            self.input_metadata={**self.input_metadata,'buildings':{**self.input_metadata.get('buildings',{}),'index_path':'building_index.sqlite'}}
         import importlib.metadata,platform,sys
         versions={name:importlib.metadata.version(name) for name in ('numpy','pandas','scipy','shapely','pyproj','pyogrio','ijson','rasterio')}
-        metadata={'software_versions':{'python':sys.version,'platform':platform.platform(),**versions},'engine_version':'7.0','result_database':str(project_path) if project_path else None,'rules':asdict(self.rules),'summary':self.summary,'sources':{key:source_fingerprint(path) for key,path in (paths or {}).items() if path},'source_layers_and_crs':self.input_metadata,'temporary_database':str(s.path),'temporary_database_lifecycle':'Removed when this result/session is closed. Full output tables are already exported. Map viewport endpoints require the active session.'}
+        metadata={'software_versions':{'python':sys.version,'platform':platform.platform(),**versions},'engine_version':'7.0','result_database':project_path.name if project_path else None,'rules':asdict(self.rules),'summary':self.summary,'sources':{key:source_fingerprint(path) for key,path in (paths or {}).items() if path},'source_layers_and_crs':self.input_metadata,'temporary_database':str(s.path),'temporary_database_lifecycle':'Removed when this result/session is closed. Full output tables are already exported. Map viewport endpoints require the active session.'}
         (folder/'run_settings.json').write_text(json.dumps(clean(metadata),indent=2,allow_nan=False),encoding='utf-8')
         # Only bounded frames reach the legacy HTML renderers.
         from shapely.geometry import shape
@@ -95,7 +95,7 @@ class DatabaseResult:
         write_map(preview,folder/'planning_map.html');write_web_map(preview,folder/'planning_web_map.html');write_openlayers_map(preview,folder/'planning_openlayers_map.html')
         self.export_earth(folder/'planning_google_earth.kml')
         runner=Path(__file__).with_name('review_project.py').resolve()
-        (folder/'Open_Result_Map.bat').write_text('@echo off\n"'+str(Path(__import__('sys').executable))+'" "'+str(runner)+'" --folder "'+str(folder.resolve())+'"\npause\n',encoding='utf-8')
+        (folder/'Open_Result_Map.bat').write_text('@echo off\n"'+str(Path(__import__('sys').executable))+'" "'+str(runner)+'" --folder "%~dp0."\npause\n',encoding='utf-8')
         (folder/'EXPORT_COMPLETE.txt').write_text('Export completed. Original plan is immutable; draft reviews are stored separately.\n')
         s.log('Full tables exported in batches; desktop and static-map previews are paginated/capped.')
         return folder

@@ -154,6 +154,20 @@ class ReleaseTests(unittest.TestCase):
             try:self.assertIsNotNone(project.buildings);self.assertEqual(project.buildings.count,1)
             finally:project.close()
 
+    def test_result_folder_can_move_and_reopen(self):
+        import shutil,urllib.request
+        from project_review import ProjectSession
+        from web_maps import LocalMapServer
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);result=run_paths(self.files(root),Rules(location_mode='Quick demo (grid centroid)'),log=lambda s:None);folder=save_plan(result,root/'out');site=result.sites.head().candidate_id.iloc[0];result.close()
+            self.assertTrue((folder/'Open_Result_Map.bat').read_text().startswith('@echo off\n'));self.assertIn('--folder "%~dp0."',(folder/'Open_Result_Map.bat').read_text())
+            moved=root/'moved_result';shutil.move(str(folder),moved);server=LocalMapServer(moved)
+            try:
+                base=server.url.rsplit('/',1)[0]
+                with urllib.request.urlopen(base+'/api/search?id='+site) as response:self.assertEqual(len(json.load(response)['features']),1)
+                project=ProjectSession(moved/'planning_project.sqlite');project.close()
+            finally:server.close()
+
     def test_scenario_load_restores_mode_and_detailed_values(self):
         import tkinter as tk
         from app import App

@@ -2,6 +2,7 @@
 import json,sqlite3,math,os,csv,shutil
 from pathlib import Path
 from datetime import datetime,timezone
+from contextlib import closing
 from shapely.geometry import Point,shape
 from session_db import Session,distance,encode
 from planner import Rules
@@ -17,12 +18,12 @@ def save_project(session,folder,rules,paths):
     if session.buildings:
         building_index=Path(folder)/'building_index.sqlite';shutil.copy2(session.buildings.path,building_index)
     session.db.commit()
-    with sqlite3.connect(partial) as db:
+    with closing(sqlite3.connect(partial)) as db:
         session.db.backup(db);db.execute('DROP TABLE inputs')
         db.execute('CREATE TABLE project_settings(value TEXT)')
         db.execute('CREATE TABLE reviews(revision INTEGER PRIMARY KEY AUTOINCREMENT,site_id TEXT,record TEXT)')
         db.execute('CREATE INDEX review_site ON reviews(site_id,revision)')
-        settings={'schema':1,'rules':vars(rules),'input_metadata':session.metadata,'terrain':paths.get('terrain'),'building_index':str(building_index) if building_index else None}
+        settings={'schema':1,'rules':vars(rules),'input_metadata':session.metadata,'terrain':paths.get('terrain'),'building_index':building_index.name if building_index else None}
         db.execute('INSERT INTO project_settings VALUES(?)',(encode(settings),));db.commit();db.execute('VACUUM')
     os.replace(partial,target);return target
 
@@ -33,6 +34,7 @@ class ProjectSession(Session):
         try:
             self.settings=json.loads(self.db.execute('SELECT value FROM project_settings').fetchone()[0]);self.rules=Rules(**self.settings['rules']);self.buildings=None;self.engineering=None
             index=self.settings.get('building_index')
+            if index and not Path(index).is_absolute():index=self.path.parent/index
             if index and Path(index).is_file():
                 from building_index import DiskBuildingContext
                 self.buildings=DiskBuildingContext(index)
