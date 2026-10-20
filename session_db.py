@@ -34,6 +34,7 @@ class Session:
         for table in ('grids','airtel','competitors','infrastructure','buffers','no_build','land','water','demand','candidates','sites'):
             self.db.execute(f'CREATE TABLE {table}(rid INTEGER PRIMARY KEY,gid TEXT,lat REAL,lon REAL,payload TEXT,geometry TEXT)')
             self.db.execute(f'CREATE INDEX {table}_gid ON {table}(gid)')
+            if table in ('grids','sites','airtel','competitors'):self.db.execute(f'CREATE INDEX {table}_search_id ON {table}(gid COLLATE NOCASE)')
             self.db.execute(f'CREATE VIRTUAL TABLE {table}_rt USING rtree(rid,minx,maxx,miny,maxy)')
         self.db.executescript('''ALTER TABLE demand ADD COLUMN assigned TEXT DEFAULT ''; ALTER TABLE demand ADD COLUMN distance REAL;
         ALTER TABLE candidates ADD COLUMN allowed INTEGER DEFAULT 1; ALTER TABLE candidates ADD COLUMN score REAL DEFAULT 0; ALTER TABLE candidates ADD COLUMN stamp INTEGER DEFAULT -1;

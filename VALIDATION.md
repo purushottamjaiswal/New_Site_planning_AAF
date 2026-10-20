@@ -1,3 +1,7 @@
+## v6.3 map tools validation
+
+All 79 automated tests passed on Linux. Checks cover global ID lookup at site 10,050, case-insensitive indexed lookup, duplicate IDs in different layers, missing IDs, invalid layers, SQL-like search text, closed-session fallback, spherical radius at Nigeria/high latitude/dateline coordinates, measurement controls, shared search/fly callbacks, all three generated viewer scripts, and offline map initialization plus measurement click and search fly-to interactions in a mocked DOM/canvas runtime. Browser rendering and real provider interaction remain unverified: the Chromium download returned invalid archives in this environment. Provider tile/API access is still required for online viewers.
+
 ## v6.2 quick demo validation
 
 All 76 automated tests passed on Linux. Regression checks cover one candidate per target grid, bypassing a candidate limit of 1 in demo mode, enforcing the limit again in detailed mode, continued rejection of water centroids, approximate-location metadata, agreement with the reference planner, and restoring detailed UI settings after toggling. UI rule extraction is tested with Tcl variables without a display; the new checkbox has not been interactively verified on Windows.

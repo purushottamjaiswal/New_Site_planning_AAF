@@ -4,6 +4,7 @@ import json,math,zipfile,xml.etree.ElementTree as ET
 from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
 from functools import partial
 import threading
+from map_tools import embed_tools
 
 
 def feature_points(frame,kind):
@@ -28,7 +29,7 @@ def map_data(plan):
         from shapely.geometry import mapping
         records=json.loads(plan.grids.to_json(orient='records'))
         grid_features=[{'type':'Feature','geometry':mapping(nominal_grid_polygon(row['lat'],row['lon'],1000 if plan.rules.grid_size=='1km' else 3000)),'properties':{'layer':'grids',**row,'geometry_basis':'Reconstructed nominal cell from source centroid and grid size'}} for row in records]
-    data={'summary':plan.summary,'layers':{
+    data={'summary':plan.summary,'rules':vars(plan.rules),'layers':{
       'sites':feature_points(plan.sites,'sites'),
       'airtel':feature_points(plan.airtel,'airtel'),
       'competitors':feature_points(plan.competitors,'competitors'),
@@ -42,7 +43,7 @@ def map_data(plan):
 def write_web_map(plan,path):
     data=map_data(plan)
     encoded=json.dumps(data,allow_nan=False).replace('<','\\u003c').replace('>','\\u003e').replace('&','\\u0026')
-    Path(path).write_text(TEMPLATE.replace('__DATA__',encoded),encoding='utf-8')
+    Path(path).write_text(embed_tools(TEMPLATE).replace('__DATA__',encoded),encoding='utf-8')
 
 
 def write_earth(plan,path):
@@ -91,6 +92,29 @@ class LocalMapServer:
             def do_GET(self):
                 from urllib.parse import urlparse,parse_qs
                 request=urlparse(self.path)
+                if request.path=='/api/search':
+                    import sqlite3
+                    from contextlib import closing
+                    try:
+                        if planning_db is None:self.send_error(503,'Temporary planning session unavailable.');return
+                        query=parse_qs(request.query);needle=query.get('id',[''])[0].strip();layer=query.get('layer',['all'])[0]
+                        if not needle or len(needle)>256 or layer not in ('all','sites','grids','airtel','competitors'):raise ValueError()
+                        features=[]
+                        with closing(sqlite3.connect(Path(planning_db).resolve().as_uri()+'?mode=ro',uri=True)) as db:
+                            db.execute('PRAGMA cache_size=-4096')
+                            for table in (('sites','grids','airtel','competitors') if layer=='all' else (layer,)):
+                                rows=db.execute(f'SELECT payload,geometry FROM {table} WHERE gid=? COLLATE NOCASE ORDER BY rid LIMIT ?', (needle,20-len(features))).fetchall()
+                                for text,geometry in rows:
+                                    properties=json.loads(text);properties['layer']=table
+                                    geom=json.loads(geometry) if geometry else {'type':'Point','coordinates':[properties['lon'],properties['lat']]}
+                                    features.append({'type':'Feature','geometry':geom,'properties':properties})
+                                if len(features)>=20:break
+                        payload=json.dumps({'type':'FeatureCollection','features':features,'limit':20}).encode()
+                        self.send_response(200);self.send_header('Content-Type','application/geo+json');self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(payload)));self.end_headers();self.wfile.write(payload)
+                    except (ValueError,KeyError):self.send_error(400,'Enter an ID up to 256 characters and a valid search layer.')
+                    except sqlite3.Error:self.send_error(503,'Temporary planning session unavailable.')
+                    except (BrokenPipeError,ConnectionResetError):pass
+                    return
                 if request.path=='/api/planning':
                     try:
                         import sqlite3
@@ -145,31 +169,43 @@ TEMPLATE=r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta na
 <body><header><h1>Site planning — buildings and imagery review</h1><div id="subtitle"></div></header><main><aside>
 <label>Map provider <select id="provider"><option value="osm">OpenStreetMap</option><option value="google">Google Maps road / satellite / terrain</option></select></label>
 <div class="small">Google requires your Maps JavaScript API key and enabled billing. Enter it for this page session; it is not saved.</div><input id="googleKey" type="password" autocomplete="off" placeholder="Google Maps API key"><button id="loadGoogle" style="margin-top:6px">Load Google map</button>
-<p id="planningPreview" class="small"></p><section><strong>Planning overlays</strong><label><input id="sites" type="checkbox" checked> Proposed sites</label><label><input id="airtel" type="checkbox" checked> Airtel inventory / reserved sites</label><label><input id="competitors" type="checkbox"> Competitor sites</label><label><input id="grids" type="checkbox"> Grids / KPI categories</label><label><input id="no_build" type="checkbox" checked> No-build polygons</label><label><input id="buildings" type="checkbox" checked> Open building footprints</label></section>
+__MAP_TOOLS_HTML__<p id="planningPreview" class="small"></p><section><strong>Planning overlays</strong><label><input id="sites" type="checkbox" checked> Proposed sites</label><label><input id="airtel" type="checkbox" checked> Airtel inventory / reserved sites</label><label><input id="competitors" type="checkbox"> Competitor sites</label><label><input id="grids" type="checkbox"> Grids / KPI categories</label><label><input id="no_build" type="checkbox" checked> No-build polygons</label><label><input id="buildings" type="checkbox" checked> Open building footprints</label></section>
 <section><a href="planning_google_earth.kmz" download>Download Google Earth KMZ</a> · <a href="planning_map.html">Offline map</a><p class="small">Import the KMZ into Google Earth Pro or Earth web to inspect sites and building outlines on its imagery/terrain. Google Earth imagery is not downloaded or analysed by this application.</p></section>
 <div id="status" class="small">Loading OpenStreetMap viewer…</div><section><strong>Selected location</strong><div id="info" class="small"></div><p><a id="googleLink" target="_blank" rel="noopener">Open in Google Maps</a></p><a href="https://earth.google.com/web/" target="_blank" rel="noopener">Open Google Earth</a></section>
 <section class="small">Building outlines are mapped/inferred evidence, not certified roof or land suitability. Rooftop search points require structural, RF and acquisition review. Empty building coverage can reflect incomplete mapping. Existing/planned sites remain visible.</section><div id="sources" class="small"></div><section><strong>Ranked proposed sites</strong><div id="siteList"></div></section></aside><div id="view"><div id="osm" class="map"></div><div id="google" class="map"></div></div></main>
-<script>const D=__DATA__;
+<script>__MAP_TOOLS_JS__
+const D=__DATA__;
 const $=id=>document.getElementById(id);const keys=['sites','airtel','competitors','grids','buildings','no_build'];let osm=null,gm=null,googleLoaded=false,leafletLayers={},googleLayers={},selected=null;
 function color(p){if(p.layer==='no_build')return '#cf2939';if(p.layer==='sites')return '#772bc4';if(p.layer==='airtel')return p.planning_role==='Reserved pipeline'?'#dd6400':'#1465af';if(p.layer==='competitors')return '#505b68';return ({Red:'#dd3446',Amber:'#df9e12',Green:'#269b68',Grey:'#939ca8'})[p.category]||'#455974'}
 function selectFeature(f){selected=f;let p=f.properties;const text=Object.entries(p).map(([k,v])=>k+': '+(v===null?'Unknown':v)).join('\n');$('info').textContent=text;let xy=f.geometry.type==='Point'?f.geometry.coordinates:null;if(xy){$('googleLink').href='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(xy[1]+','+xy[0]);$('googleLink').textContent='Open selected location in Google Maps'}}
-function locate(f){selectFeature(f);let[lon,lat]=f.geometry.coordinates;if(osm)osm.setView([lat,lon],17);if(gm){gm.setCenter({lat,lng:lon});gm.setZoom(17)}}
+function locate(f){tools.choose(f)}
+function flyFeature(f){selectFeature(f);const xy=MapTools.center(f);if(!xy)return;let[lon,lat]=xy;if(osm)osm.flyTo([lat,lon],f.properties.layer==='grids'?15:17,{duration:.65});if(gm){gm.panTo({lat,lng:lon});gm.setZoom(f.properties.layer==='grids'?15:17)}}
 function osmInit(){if(!window.L){$('status').textContent='Leaflet could not load. Check internet/proxy, use Google Maps or open the offline map.';return}
-osm=L.map('osm',{preferCanvas:true}).setView([0,20],4);
+osm=L.map('osm',{preferCanvas:true}).setView([0,20],4);osm.on('click',e=>tools.add([e.latlng.lng,e.latlng.lat]));
 const tiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(osm);
 let failed=false;tiles.on('tileerror',()=>{if(!failed){failed=true;$('status').textContent='Some OSM tiles failed. Check connectivity/provider limits. Planning overlays remain available.'}});
-for(const key of keys){leafletLayers[key]=L.geoJSON(D.layers[key],{style:f=>({color:f.properties.layer==='grids'?color(f.properties):f.properties.layer==='no_build'?'#cf2939':'#79543b',weight:1,fillOpacity:.25}),pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:key==='sites'?6:key==='grids'?2:3,color:color(f.properties),weight:1,fillOpacity:.8}),onEachFeature:(f,layer)=>layer.on('click',()=>selectFeature(f))});if($(key).checked)leafletLayers[key].addTo(osm)}
+for(const key of keys){leafletLayers[key]=L.geoJSON(D.layers[key],{style:f=>({color:f.properties.layer==='grids'?color(f.properties):f.properties.layer==='no_build'?'#cf2939':'#79543b',weight:1,fillOpacity:.25}),pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:key==='sites'?6:key==='grids'?2:3,color:color(f.properties),weight:1,fillOpacity:.8}),onEachFeature:(f,layer)=>layer.on('click',e=>{if(!tools.state.measuring)selectFeature(f)})});if($(key).checked)leafletLayers[key].addTo(osm)}
 let positions=D.layers.sites.features.map(f=>[f.geometry.coordinates[1],f.geometry.coordinates[0]]);if(!positions.length)positions=D.layers.grids.features.filter(f=>f.geometry.type==='Point').map(f=>[f.geometry.coordinates[1],f.geometry.coordinates[0]]);if(positions.length)osm.fitBounds(positions,{padding:[35,35],maxZoom:16});
-$('status').textContent='OpenStreetMap online tiles. Footprints used: '+D.layers.buildings.features.length+'. No imagery extraction or terrain simulation.'}
-function syncLayers(){for(const key of keys){if(osm&&leafletLayers[key]){if($(key).checked)leafletLayers[key].addTo(osm);else osm.removeLayer(leafletLayers[key])}if(googleLayers[key])googleLayers[key].setMap($(key).checked?gm:null)}}
+tools.refresh();$('status').textContent='OpenStreetMap online tiles. Footprints used: '+D.layers.buildings.features.length+'. No imagery extraction or terrain simulation.'}
+function syncLayers(){for(const key of keys){if(osm&&leafletLayers[key]){if($(key).checked)leafletLayers[key].addTo(osm);else osm.removeLayer(leafletLayers[key])}if(googleLayers[key])googleLayers[key].setMap($(key).checked?gm:null)}if(typeof tools!=='undefined')tools.refresh()}
 function switchMap(value){$('osm').style.display=value==='osm'?'block':'none';$('google').style.display=value==='google'?'block':'none';if(value==='osm'&&osm)setTimeout(()=>osm.invalidateSize(),20);if(value==='google'&&!googleLoaded)$('status').textContent='Enter a Google Maps JavaScript API key and click Load Google map.'}
 window.gm_authFailure=()=>{$('status').textContent='Google API authorization failed. Check API enablement, billing and HTTP referrer restrictions for http://127.0.0.1:8765/*.'};
-window.initPlanningGoogle=()=>{try{let c=osm?osm.getCenter():{lat:0,lng:20};gm=new google.maps.Map($('google'),{center:{lat:c.lat,lng:c.lng},zoom:osm?osm.getZoom():5,mapTypeId:'hybrid',mapTypeControl:true});for(const key of keys){let layer=new google.maps.Data();layer.addGeoJson(D.layers[key]);layer.setStyle(feature=>({fillColor:key==='buildings'?'#c6a374':color({layer:key,category:feature.getProperty('category'),planning_role:feature.getProperty('planning_role')}),fillOpacity:key==='buildings'?.3:.75,strokeColor:key==='buildings'?'#67452b':'#4a4d63',strokeWeight:1,icon:['buildings','no_build'].includes(key)?null:{path:google.maps.SymbolPath.CIRCLE,scale:key==='sites'?6:key==='grids'?2:3,fillOpacity:.9,fillColor:color({layer:key,category:feature.getProperty('category'),planning_role:feature.getProperty('planning_role')}),strokeWeight:1}}));layer.addListener('click',e=>e.feature.toGeoJson(selectFeature));googleLayers[key]=layer}googleLoaded=true;syncLayers();$('status').textContent='Google Maps official API. Use its map-type control for road, satellite, hybrid or terrain. Imagery is visual context only.';if(selected)locate(selected)}catch(e){$('status').textContent='Google map initialization failed: '+e.message}};
+window.initPlanningGoogle=()=>{try{let c=osm?osm.getCenter():{lat:0,lng:20};gm=new google.maps.Map($('google'),{center:{lat:c.lat,lng:c.lng},zoom:osm?osm.getZoom():5,mapTypeId:'hybrid',mapTypeControl:true});for(const key of keys){let layer=new google.maps.Data();layer.addGeoJson(D.layers[key]);layer.setStyle(feature=>({fillColor:key==='buildings'?'#c6a374':color({layer:key,category:feature.getProperty('category'),planning_role:feature.getProperty('planning_role')}),fillOpacity:key==='buildings'?.3:.75,strokeColor:key==='buildings'?'#67452b':'#4a4d63',strokeWeight:1,icon:['buildings','no_build'].includes(key)?null:{path:google.maps.SymbolPath.CIRCLE,scale:key==='sites'?6:key==='grids'?2:3,fillOpacity:.9,fillColor:color({layer:key,category:feature.getProperty('category'),planning_role:feature.getProperty('planning_role')}),strokeWeight:1}}));layer.addListener('click',e=>{if(!tools.add([e.latLng.lng(),e.latLng.lat()]))e.feature.toGeoJson(selectFeature)});googleLayers[key]=layer}gm.addListener('click',e=>tools.add([e.latLng.lng(),e.latLng.lat()]));googleLoaded=true;syncLayers();$('status').textContent='Google Maps official API. Use its map-type control for road, satellite, hybrid or terrain. Imagery is visual context only.';if(selected)locate(selected)}catch(e){$('status').textContent='Google map initialization failed: '+e.message}};
 $('loadGoogle').onclick=()=>{if(googleLoaded){$('provider').value='google';switchMap('google');return}let key=$('googleKey').value.trim();if(!key){$('status').textContent='Provide your Google Maps API key. OSM and Google Earth export do not need it.';return}if(document.getElementById('googleApiScript')){$('status').textContent='Google API is already loading. If it failed, reload this page to retry.';return}$('provider').value='google';switchMap('google');let script=document.createElement('script');script.id='googleApiScript';script.async=true;script.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(key)+'&loading=async&callback=initPlanningGoogle&v=weekly';script.onerror=()=>{$('status').textContent='Google Maps script failed to load. Check connectivity and API setup.'};document.head.appendChild(script);$('googleKey').value=''};
 $('provider').onchange=e=>switchMap(e.target.value);for(const key of keys)$(key).onchange=syncLayers;
 $('subtitle').textContent=D.summary.country+' · '+D.summary.grid_period+' · '+D.summary.mode+' · '+D.summary.location_mode;
 $('planningPreview').textContent=D.summary.map_preview_limits?'Static preview is capped at 500 planned sites and 5,000 grids/inventory records. Full CSV/GeoJSON exports contain every result. Use the OpenLayers viewer for live viewport queries.':'';
 $('sources').textContent='Building source: '+(D.building_metadata.source||'None loaded')+'; license: '+(D.building_metadata.license||'not supplied')+'. Showing '+D.layers.buildings.features.length+' of '+D.building_total+' input footprints (viewer cap 5,000; full footprints exported). '+(D.building_metadata.retrieved_utc?'Retrieved '+D.building_metadata.retrieved_utc:'');
 for(const f of D.layers.sites.features){const b=document.createElement('button');b.textContent=f.properties.rank+'. '+f.properties.candidate_id;b.onclick=()=>locate(f);$('siteList').appendChild(b)}
+
+let leafletTools=null,googleTools=[];
+function redrawTools(state){if(osm){if(leafletTools)osm.removeLayer(leafletTools);leafletTools=L.layerGroup().addTo(osm)}for(const item of googleTools)item.setMap(null);googleTools=[];
+ const points=state.points.map(p=>[p[1],p[0]]);if(osm&&points.length>1)L.polyline(points,{color:'#e44817',weight:3,interactive:false}).addTo(leafletTools);if(gm&&points.length>1)googleTools.push(new google.maps.Polyline({map:gm,path:state.points.map(p=>({lat:p[1],lng:p[0]})),geodesic:true,strokeColor:'#e44817',strokeWeight:3,clickable:false}));
+ for(const p of state.points){if(osm)L.circleMarker([p[1],p[0]],{radius:4,color:'#e44817',interactive:false}).addTo(leafletTools)}
+ const selected=state.selected,xy=selected&&MapTools.center(selected);if(xy){if(osm)L.circleMarker([xy[1],xy[0]],{radius:12,color:'#e44817',weight:3,fill:false,interactive:false}).addTo(leafletTools);if(gm)googleTools.push(new google.maps.Circle({map:gm,center:{lat:xy[1],lng:xy[0]},radius:30,strokeColor:'#e44817',fillOpacity:0,clickable:false}))}
+ if(state.radius&&$('sites').checked){const sites=[...D.layers.sites.features];if(selected&&selected.properties.layer==='sites'&&!sites.some(f=>f.properties.candidate_id===selected.properties.candidate_id))sites.push(selected);for(const f of sites){const xy=MapTools.center(f);if(!xy)continue;const ring=MapTools.ring(xy,D.rules.service_radius_km*1000);if(osm)L.polygon(ring.map(p=>[p[1],p[0]]),{color:'#6551b8',weight:1,dashArray:'6 4',fillOpacity:.06,interactive:false}).addTo(leafletTools);if(gm)googleTools.push(new google.maps.Polygon({map:gm,paths:ring.map(p=>({lat:p[1],lng:p[0]})),geodesic:true,strokeColor:'#6551b8',strokeOpacity:.6,strokeWeight:1,fillColor:'#6551b8',fillOpacity:.06,clickable:false}))}}
+}
+const tools=MapTools.install({radiusKm:D.rules.service_radius_km,live:!!D.summary.database_path,features:()=>['sites','grids','airtel','competitors'].flatMap(key=>D.layers[key].features),fly:f=>{const key=f.properties.layer;if($(key))$(key).checked=true;syncLayers();flyFeature(f)},redraw:redrawTools});tools.refresh();
+
 let leaflet=document.createElement('script');leaflet.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';leaflet.onload=osmInit;leaflet.onerror=()=>osmInit();document.head.appendChild(leaflet);
 </script></body></html>'''

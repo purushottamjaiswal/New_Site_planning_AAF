@@ -1,6 +1,7 @@
 """Self-contained offline geographic overview. No external scripts or tile requests."""
 import json
 from pathlib import Path
+from map_tools import embed_tools
 
 def clean_records(frame, columns):
     cols=[c for c in columns if c in frame]
@@ -22,7 +23,7 @@ def write_map(plan, path):
       'airtel':clean_records(plan.airtel,['id','lat','lon','planning_role','technology','status']),
       'competitors':clean_records(plan.competitors,['id','lat','lon','operator','period','technology'])}
     data=json.dumps(payload,allow_nan=False).replace('<','\\u003c').replace('>','\\u003e').replace('&','\\u0026')
-    html=TEMPLATE.replace('__PAYLOAD__',data)
+    html=embed_tools(TEMPLATE).replace('__PAYLOAD__',data)
     Path(path).write_text(html,encoding='utf-8')
 
 TEMPLATE=r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -39,13 +40,14 @@ label{display:block;margin:9px 0}button,input{font:inherit;padding:8px;border:1p
 @media(max-width:700px){main{grid-template-columns:230px 1fr}aside{padding:10px}}
 </style></head><body><div style="background:#fff1cc;padding:8px;font:12px system-ui">Offline map uses no internet tiles. While the desktop app is open, local viewport queries show grids and sites beyond the initial preview. Full grid polygons: <a href="grid_assessment_spatial.geojson" download>download complete GeoJSON</a>. <span id="viewportStatus"></span></div><header><div><h1>New site planning</h1><div id="subtitle" class="muted"></div></div><div class="badge">Planning candidates • RF validation required</div></header>
 <main><aside><div id="mode" class="badge"></div><section><div id="count" class="metric"></div><div>proposed site locations</div><p id="totals" class="small"></p></section>
-<button id="fit">Fit country</button><input id="search" style="width:100%;margin-top:8px" placeholder="Find grid or site ID"><button id="find" style="margin-top:5px">Find</button>
-<section><strong>Layers</strong><label><input type="checkbox" id="no_build_polygons" checked> No-build polygons</label><label><input type="checkbox" id="buildings" checked> Mapped building footprints (up to 5,000)</label><label><input type="checkbox" id="grids" checked> Complete grid footprints / KPI categories</label><label><input type="checkbox" id="airtel" checked> Airtel sites</label><label><input type="checkbox" id="competitors"> Competitor sites</label><label><input type="checkbox" id="sites" checked> Proposed sites</label><label><input type="checkbox" id="demand_points" checked> Supplied detailed demand points</label><label><input type="checkbox" id="radius"> Assumed service radius</label></section>
+<button id="fit">Fit country</button>__MAP_TOOLS_HTML__
+<section><strong>Layers</strong><label><input type="checkbox" id="no_build_polygons" checked> No-build polygons</label><label><input type="checkbox" id="buildings" checked> Mapped building footprints (up to 5,000)</label><label><input type="checkbox" id="grids" checked> Complete grid footprints / KPI categories</label><label><input type="checkbox" id="airtel" checked> Airtel sites</label><label><input type="checkbox" id="competitors"> Competitor sites</label><label><input type="checkbox" id="sites" checked> Proposed sites</label><label><input type="checkbox" id="demand_points" checked> Supplied detailed demand points</label></section>
 <div class="legend small"><div><span style="background:#d52f42"></span>Red</div><div><span style="background:#e3a21b"></span>Amber</div><div><span style="background:#2b9d70"></span>Green</div><div>▲ Airtel · ◆ Proposed · + Competitor · ● Detailed demand</div></div>
 <section class="small">Drag to pan. Scroll to zoom. Hover for details. Click a proposed site below to locate it. At country scale, cells display as points. No online basemap.</section>
 <div class="small" id="notes"></div><section><strong>Selection detail</strong><div id="detail">Hover over a map feature.</div></section><section><strong>Ranked sites</strong><div id="siteList"></div></section></aside>
 <div id="mapwrap"><canvas id="map"></canvas><div id="tip"></div><div id="scale"></div></div></main>
-<script>const D=__PAYLOAD__;
+<script>__MAP_TOOLS_JS__
+const D=__PAYLOAD__;
 const $=id=>document.getElementById(id), cv=$('map'),ctx=cv.getContext('2d'),wrap=$('mapwrap');let W,H,z=1,cx=0,cy=0,drag=null,hits=[];
 function project(lat,lon){let la=Math.max(-85,Math.min(85,lat))*Math.PI/180;return [lon*Math.PI/180,Math.log(Math.tan(Math.PI/4+la/2))]}
 for(const key of ['grids','sites','airtel','competitors','demand_points'])D[key].forEach(p=>p.xy=project(p.lat,p.lon));
@@ -67,9 +69,9 @@ if($('grids').checked) for(const p of D.grids){let [x,y]=screen(p.xy);if(x<-20||
 ctx.globalAlpha=1;
 if($('buildings').checked)for(const f of D.building_footprints){ctx.beginPath();for(const poly of f.xy)for(const ring of poly){ring.forEach((p,i)=>{let[x,y]=screen(p);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)});ctx.closePath()}ctx.fillStyle='#76523866';ctx.fill('evenodd');ctx.strokeStyle='#65452d';ctx.lineWidth=.6;ctx.stroke()}
 for(const key of ['competitors','demand_points','airtel','sites']){if(!$(key).checked)continue;for(const p of D[key]){let[x,y]=screen(p.xy);if(x<-20||x>W+20||y<-20||y>H+20)continue;
-if(key==='sites'&&$('radius').checked){let r=D.rules.service_radius_km/6371.0088/Math.cos(p.lat*Math.PI/180)*z;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle='#5269cb14';ctx.fill();ctx.strokeStyle='#5269cb70';ctx.stroke()}
+if(key==='sites'&&tools.state.radius){ctx.beginPath();MapTools.ring([p.lon,p.lat],D.rules.service_radius_km*1000).forEach((p,i)=>{const[x,y]=screen(project(p[1],p[0]));if(i)ctx.lineTo(x,y);else ctx.moveTo(x,y)});ctx.closePath();ctx.fillStyle='#5269cb14';ctx.fill();ctx.strokeStyle='#5269cb70';ctx.stroke()}
 ctx.beginPath();if(key==='sites'){ctx.moveTo(x,y-7);ctx.lineTo(x+6,y);ctx.lineTo(x,y+7);ctx.lineTo(x-6,y);ctx.closePath();ctx.fillStyle='#4920aa';ctx.fill();ctx.strokeStyle='white';ctx.stroke();if(z>12000){ctx.fillStyle='#251744';ctx.font='11px system-ui';ctx.fillText(p.rank,x+8,y+3)}}else if(key==='demand_points'){ctx.arc(x,y,3,0,Math.PI*2);ctx.fillStyle='#0087a0';ctx.fill()}else if(key==='airtel'){ctx.moveTo(x,y-5);ctx.lineTo(x+4,y+4);ctx.lineTo(x-4,y+4);ctx.closePath();ctx.fillStyle=p.planning_role==='Active 4G/5G'?'#153d80':p.planning_role==='Reserved pipeline'?'#ce44a7':'#7b8492';ctx.fill()}else{ctx.moveTo(x-3,y);ctx.lineTo(x+3,y);ctx.moveTo(x,y-3);ctx.lineTo(x,y+3);ctx.strokeStyle='#444';ctx.stroke()}hits.push([x,y,p,key])}}
-let lat=(2*Math.atan(Math.exp(cy))-Math.PI/2),km=100/z*6371.0088*Math.cos(lat);text('scale','100 px ≈ '+km.toFixed(km<1?2:1)+' km · WGS84 overview')}
+drawToolOverlays();let lat=(2*Math.atan(Math.exp(cy))-Math.PI/2),km=100/z*6371.0088*Math.cos(lat);text('scale','100 px ≈ '+km.toFixed(km<1?2:1)+' km · WGS84 overview')}
 let viewportTimer=null,viewportKey='',viewportVersion=0;
 function preparePolygon(f){const polygons=f.geometry.type==='Polygon'?[f.geometry.coordinates]:f.geometry.coordinates;f.xy=polygons.map(poly=>poly.map(ring=>ring.map(c=>project(c[1],c[0]))));return f}
 function scheduleViewport(){
@@ -95,16 +97,23 @@ function scheduleViewport(){
   }catch(e){text('viewportStatus',' Showing the bounded saved preview. Reopen from the running desktop app for all areas.');}
  },180);
 }
+
+function loadedFeatures(){return ['sites','grids','airtel','competitors'].flatMap(key=>D[key].map(p=>({type:'Feature',geometry:{type:'Point',coordinates:[p.lon,p.lat]},properties:{...p,layer:key}})))}
+let flight=0;
+function flyFeature(f){const xy=MapTools.center(f);if(!xy)return;const key=f.properties.layer;if($(key))$(key).checked=true;const p={...f.properties,lat:xy[1],lon:xy[0],xy:project(xy[1],xy[0])};const start=[cx,cy,z],end=[...p.xy,Math.max(z,key==='grids'?70000:150000)],at=performance.now(),token=++flight;text('detail',detail(p,'Selected'));function frame(now){if(token!==flight)return;const t=Math.min(1,(now-at)/650),ease=1-(1-t)**3;[cx,cy,z]=start.map((v,i)=>v+(end[i]-v)*ease);draw();if(t<1)requestAnimationFrame(frame)}requestAnimationFrame(frame)}
+const tools=MapTools.install({radiusKm:D.rules.service_radius_km,features:loadedFeatures,fly:flyFeature,redraw:()=>draw(),live:!!D.summary.database_path});
+function drawToolOverlays(){const state=tools.state;ctx.strokeStyle='#e44817';ctx.lineWidth=2;ctx.beginPath();state.points.forEach((p,i)=>{const[x,y]=screen(project(p[1],p[0]));if(i)ctx.lineTo(x,y);else ctx.moveTo(x,y)});ctx.stroke();for(const p of state.points){const[x,y]=screen(project(p[1],p[0]));ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fillStyle='#e44817';ctx.fill()}if(state.selected){const p=MapTools.center(state.selected);if(p){const[x,y]=screen(project(p[1],p[0]));ctx.beginPath();ctx.arc(x,y,11,0,Math.PI*2);ctx.stroke()}}}
+
 function resize(){let r=wrap.getBoundingClientRect();W=r.width;H=r.height;let d=window.devicePixelRatio||1;cv.width=W*d;cv.height=H*d;cv.style.width=W+'px';cv.style.height=H+'px';ctx.setTransform(d,0,0,d,0,0);draw()}
 function detail(p,kind){return kind+'\n'+Object.entries(p).filter(([k])=>k!=='xy').map(([k,v])=>k+': '+(v===null?'Unavailable':v)).join('\n')}
-function locate(p){cx=p.xy[0];cy=p.xy[1];z=Math.max(z,70000);text('detail',detail(p,'Selected'));draw()}
-cv.addEventListener('pointerdown',e=>{drag={x:e.offsetX,y:e.offsetY,cx,cy};cv.setPointerCapture(e.pointerId);$('tip').style.display='none'});
-cv.addEventListener('pointerup',()=>drag=null);cv.addEventListener('pointercancel',()=>drag=null);
+function locate(p){tools.choose({type:'Feature',geometry:{type:'Point',coordinates:[p.lon,p.lat]},properties:{...p,layer:p.candidate_id?'sites':'grids'}})}
+cv.addEventListener('pointerdown',e=>{flight++;drag={x:e.offsetX,y:e.offsetY,cx,cy};cv.setPointerCapture(e.pointerId);$('tip').style.display='none'});
+cv.addEventListener('pointerup',e=>{if(drag&&Math.hypot(e.offsetX-drag.x,e.offsetY-drag.y)<5){const x=cx+(e.offsetX-W/2)/z,y=cy-(e.offsetY-H/2)/z;tools.add([x*180/Math.PI,(2*Math.atan(Math.exp(y))-Math.PI/2)*180/Math.PI])}drag=null});cv.addEventListener('pointercancel',()=>drag=null);
 cv.addEventListener('pointermove',e=>{if(drag){cx=drag.cx-(e.offsetX-drag.x)/z;cy=drag.cy+(e.offsetY-drag.y)/z;draw();return}let best=null,dist=10;for(let i=hits.length-1;i>=0;i--){let h=hits[i],d=Math.hypot(h[0]-e.offsetX,h[1]-e.offsetY);if(d<dist){dist=d;best=h}}if(best){text('detail',detail(best[2],best[3]));text('tip',(best[2].candidate_id||best[2].id||best[2].point_id)+' · '+(best[2].category||best[2].operator||best[2].planning_role||''));$('tip').style.display='block';$('tip').style.left=Math.min(W-220,e.offsetX+12)+'px';$('tip').style.top=Math.max(0,e.offsetY-30)+'px'}else $('tip').style.display='none'});
-cv.addEventListener('wheel',e=>{e.preventDefault();let px=cx+(e.offsetX-W/2)/z,py=cy-(e.offsetY-H/2)/z;z=Math.max(50,Math.min(2e7,z*Math.exp(-e.deltaY*.0015)));cx=px-(e.offsetX-W/2)/z;cy=py+(e.offsetY-H/2)/z;draw()},{passive:false});
+cv.addEventListener('wheel',e=>{flight++;e.preventDefault();let px=cx+(e.offsetX-W/2)/z,py=cy-(e.offsetY-H/2)/z;z=Math.max(50,Math.min(2e7,z*Math.exp(-e.deltaY*.0015)));cx=px-(e.offsetX-W/2)/z;cy=py+(e.offsetY-H/2)/z;draw()},{passive:false});
 cv.addEventListener('pointerleave',()=>{$('tip').style.display='none'});
-for(const id of ['grids','airtel','competitors','sites','demand_points','radius','buildings','no_build_polygons'])$(id).onchange=draw;$('fit').onclick=fit;
-$('find').onclick=()=>{let id=$('search').value.trim().toLowerCase();let p=[...D.sites,...D.grids,...D.airtel,...D.competitors].find(p=>(p.candidate_id||p.id||'').toLowerCase()===id);if(p)locate(p);else text('detail','No matching ID in this run.')};
+for(const id of ['grids','airtel','competitors','sites','demand_points','buildings','no_build_polygons'])$(id).onchange=draw;$('fit').onclick=fit;
+
 for(const p of D.sites){let b=document.createElement('button');b.textContent=p.rank+'. '+p.candidate_id+' · '+Math.round(p.incremental_demand).toLocaleString();b.onclick=()=>locate(p);$('siteList').appendChild(b)}
 window.addEventListener('resize',resize);resize();fit();
 </script></body></html>'''

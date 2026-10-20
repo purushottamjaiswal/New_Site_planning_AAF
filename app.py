@@ -19,7 +19,7 @@ ROOT=Path(__file__).resolve().parent
 
 class App(tk.Tk):
     def __init__(self):
-        super().__init__();self.title('Airtel Africa | New Site Planning v6.2')
+        super().__init__();self.title('Airtel Africa | New Site Planning v6.3')
         width,height=initial_window_size(self.winfo_screenwidth(),self.winfo_screenheight())
         self.geometry(f'{width}x{height}+20+20');self.minsize(min(680,width),min(420,height));self.resizable(True,True)
         self.columnconfigure(0,weight=1);self.rowconfigure(1,weight=1);self.page_hosts={}
