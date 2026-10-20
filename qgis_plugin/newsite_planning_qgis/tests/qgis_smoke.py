@@ -22,7 +22,7 @@ def run(iface):
         assert 0<float(row['__ns_lat'])<.01
         assert 0<float(row['__ns_lon'])<.01
         assert .1<float(row['__ns_area_km2'])<.2
-        assert json.loads(Path(boundary).read_text())['features'][0]['geometry']['type']=='Polygon'
+        assert json.loads(Path(boundary).read_text(encoding='utf-8'))['features'][0]['geometry']['type']=='Polygon'
         assert mapping['lat']=='__ns_lat' and mapping['area']=='__ns_area_km2'
     dock=PlanningDock(iface)
     assert set(dock.controls)==set(SCHEMA['defaults'])

@@ -41,7 +41,7 @@ class DiskIndexTests(unittest.TestCase):
             self.assertEqual(len(list(ctx.iter_features((0,-1,1,1)))),1)
             self.assertEqual(len(ctx.features[:1]),1)
             again=load_buildings(p,Rules(),disk=True,cache_dir=cache);self.assertEqual(ctx.path,again.path)
-            out=root/'export.geojson';ctx.export_geojson(out);self.assertEqual(len(json.loads(out.read_text())['features']),2)
+            out=root/'export.geojson';ctx.export_geojson(out);self.assertEqual(len(json.loads(out.read_text(encoding='utf-8'))['features']),2)
     def test_disk_screening_matches_regional_and_crosses_tile_edge(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);p,features=self.source(root);ctx=load_buildings(p,Rules(),disk=True,cache_dir=root/'cache')
@@ -92,7 +92,7 @@ class DiskIndexTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);source,_=self.source(root);ctx=load_buildings(source,Rules(),disk=True,cache_dir=root/'cache')
             raw=fixtures();raw['_buildings']=ctx;plan=plan_frames(raw,Rules(),log=lambda s:None);plan.input_metadata={'buildings':ctx.metadata}
-            folder=save_plan(plan,root/'out');html=(folder/'planning_openlayers_map.html').read_text()
+            folder=save_plan(plan,root/'out');html=(folder/'planning_openlayers_map.html').read_text(encoding='utf-8')
             self.assertIn('var wms_layers = []',html);self.assertIn('mt1.google.com/vt/lyrs=s',html);self.assertIn('mt1.google.com/vt/lyrs=m',html)
             server=LocalMapServer(folder)
             try:

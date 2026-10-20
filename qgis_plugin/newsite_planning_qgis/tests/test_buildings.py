@@ -78,7 +78,7 @@ class BuildingTests(unittest.TestCase):
             f=save_plan(p,td);tree=ET.parse(f/'planning_google_earth.kml');ns={'k':'http://www.opengis.net/kml/2.2'}
             self.assertGreater(len(tree.findall('.//k:Placemark',ns)),0)
             with zipfile.ZipFile(f/'planning_google_earth.kmz') as z:self.assertIn('doc.kml',z.namelist())
-            page=(f/'planning_web_map.html').read_text();self.assertIn('maps.googleapis.com/maps/api/js',page);self.assertIn('https://tile.openstreetmap.org/',page)
+            page=(f/'planning_web_map.html').read_text(encoding='utf-8');self.assertIn('maps.googleapis.com/maps/api/js',page);self.assertIn('https://tile.openstreetmap.org/',page)
             self.assertNotIn('mt1.google.com',page);self.assertTrue((f/'building_footprints_used.geojson').exists())
 
     def test_clip_uses_polygon_not_csv_centroid_hint(self):

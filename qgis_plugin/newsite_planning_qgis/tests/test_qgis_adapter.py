@@ -60,13 +60,13 @@ class AdapterTests(unittest.TestCase):
             run=subprocess.run([sys.executable,str(ROOT/'worker.py'),'--job',str(cfg)],capture_output=True,text=True,timeout=30)
             self.assertEqual(run.returncode,0,run.stdout+run.stderr)
             messages=[json.loads(line) for line in run.stdout.splitlines()];result=next(m for m in messages if m['event']=='result')
-            spatial=json.loads(Path(result['layers']['grids']).read_text());self.assertEqual(len(spatial['features']),5)
+            spatial=json.loads(Path(result['layers']['grids']).read_text(encoding='utf-8'));self.assertEqual(len(spatial['features']),5)
             self.assertEqual(spatial['features'][0]['geometry']['type'],'Polygon')
             self.assertTrue((Path(result['folder'])/'qgis_layer_provenance.json').exists())
 
     def test_schema_and_rule_controls_stay_in_sync(self):
-        schema=json.loads((ROOT/'schema.json').read_text());self.assertEqual(set(schema['defaults']),set(vars(Rules())))
-        tree=ast.parse((ROOT/'dock.py').read_text())
+        schema=json.loads((ROOT/'schema.json').read_text(encoding='utf-8'));self.assertEqual(set(schema['defaults']),set(vars(Rules())))
+        tree=ast.parse((ROOT/'dock.py').read_text(encoding='utf-8'))
         method=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='make_rules')
         assign=next(n for n in method.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='groups' for t in n.targets))
         groups=ast.literal_eval(assign.value);self.assertEqual(set(k for _,keys in groups for k in keys),set(vars(Rules())))
@@ -75,6 +75,6 @@ class AdapterTests(unittest.TestCase):
         cfg=configparser.ConfigParser();cfg.read(ROOT/'metadata.txt');self.assertEqual(cfg['general']['qgisMinimumVersion'],'3.34')
         import newsite_planning_qgis
         self.assertTrue(callable(newsite_planning_qgis.classFactory))
-        tree=ast.parse((ROOT/'__init__.py').read_text());self.assertFalse(any(isinstance(n,(ast.Import,ast.ImportFrom)) for n in tree.body))
+        tree=ast.parse((ROOT/'__init__.py').read_text(encoding='utf-8'));self.assertFalse(any(isinstance(n,(ast.Import,ast.ImportFrom)) for n in tree.body))
 
 if __name__=='__main__':unittest.main(verbosity=2)

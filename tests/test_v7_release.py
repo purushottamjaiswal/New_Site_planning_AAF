@@ -160,7 +160,7 @@ class ReleaseTests(unittest.TestCase):
         from web_maps import LocalMapServer
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);result=run_paths(self.files(root),Rules(location_mode='Quick demo (grid centroid)'),log=lambda s:None);folder=save_plan(result,root/'out');site=result.sites.head().candidate_id.iloc[0];result.close()
-            self.assertTrue((folder/'Open_Result_Map.bat').read_text().startswith('@echo off\n'));self.assertIn('--folder "%~dp0."',(folder/'Open_Result_Map.bat').read_text())
+            self.assertTrue((folder/'Open_Result_Map.bat').read_text(encoding='utf-8').startswith('@echo off\n'));self.assertIn('--folder "%~dp0."',(folder/'Open_Result_Map.bat').read_text(encoding='utf-8'))
             moved=root/'moved_result';shutil.move(str(folder),moved);server=LocalMapServer(moved)
             try:
                 base=server.url.rsplit('/',1)[0]

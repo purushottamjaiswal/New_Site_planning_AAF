@@ -74,8 +74,8 @@ class PlanningTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             folder=save_plan(p,td)
             self.assertIn('candidate_id',pd.read_csv(folder/'proposed_sites.csv').columns)
-            self.assertEqual(json.loads((folder/'proposed_sites.geojson').read_text())['features'],[])
-            self.assertIn('const D=',(folder/'planning_map.html').read_text())
+            self.assertEqual(json.loads((folder/'proposed_sites.geojson').read_text(encoding='utf-8'))['features'],[])
+            self.assertIn('const D=',(folder/'planning_map.html').read_text(encoding='utf-8'))
 
     def test_invalid_coordinates_are_audited(self):
         raw=fixtures();raw['grid'].loc[0,'centroid_lat']='200'

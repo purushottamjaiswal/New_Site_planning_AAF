@@ -47,7 +47,7 @@ class MapToolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td)
             for name,writer in [('offline',write_map),('openlayers',write_openlayers_map),('alternate',write_web_map)]:
-                html=root/(name+'.html');writer(plan,html);text=html.read_text()
+                html=root/(name+'.html');writer(plan,html);text=html.read_text(encoding='utf-8')
                 self.assertEqual(text.count('id="toolRadius"'),1)
                 self.assertEqual(text.count('id="toolFind"'),1)
                 self.assertNotIn('__MAP_TOOLS_',text)

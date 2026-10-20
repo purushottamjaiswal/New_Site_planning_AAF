@@ -77,13 +77,13 @@ class WaterGridTests(unittest.TestCase):
             result=run_paths(paths,Rules(),log=lambda s:None);server=None
             try:
                 folder=save_plan(result,root/'out',paths)
-                features=json.loads((folder/'grid_assessment_spatial.geojson').read_text())['features']
+                features=json.loads((folder/'grid_assessment_spatial.geojson').read_text(encoding='utf-8'))['features']
                 self.assertEqual(len(features),5)
                 self.assertTrue(all(f['geometry']['type']=='Polygon' for f in features))
                 server=LocalMapServer(folder)
                 with urllib.request.urlopen('http://127.0.0.1:8765/api/planning?layer=grids&bbox=-1,-1,1,1') as response:data=json.load(response)
                 self.assertEqual([f['geometry'] for f in data['features']],[f['geometry'] for f in features])
-                html=(folder/'planning_map.html').read_text();self.assertIn('scheduleViewport',html);self.assertIn('/api/planning?layer=',html)
+                html=(folder/'planning_map.html').read_text(encoding='utf-8');self.assertIn('scheduleViewport',html);self.assertIn('/api/planning?layer=',html)
                 self.assertIn('geometry_basis',features[0]['properties'])
             finally:
                 if server:server.close()
