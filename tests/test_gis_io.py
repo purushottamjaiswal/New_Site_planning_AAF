@@ -54,7 +54,7 @@ class ImportTests(unittest.TestCase):
 
     def test_kml_and_kmz_attributes_and_polygons(self):
         with tempfile.TemporaryDirectory() as td:
-            kml=Path(td)/'buildings.kml';kml.write_text(KML)
+            kml=Path(td)/'buildings.kml';kml.write_text(KML,encoding='utf-8')
             kmz=Path(td)/'buildings.kmz'
             with zipfile.ZipFile(kmz,'w') as z:z.write(kml,'doc.kml')
             for path in (kml,kmz):
@@ -65,7 +65,7 @@ class ImportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path=Path(td)/'esri.json'
             obj={'geometryType':'esriGeometryPolygon','spatialReference':{'wkid':3857},'fields':[{'name':'building_id','type':'esriFieldTypeString'},{'name':'confidence','type':'esriFieldTypeDouble'}], 'features':[{'attributes':{'building_id':'b1','confidence':.9},'geometry':{'rings':[list(POLY.exterior.coords)]}}]}
-            path.write_text(json.dumps(obj));d=read_source(path);self.assertEqual(d.metadata['driver'],'ESRIJSON');self.assertLess(d.geometries[0].centroid.x,.02)
+            path.write_text(json.dumps(obj),encoding='utf-8');d=read_source(path);self.assertEqual(d.metadata['driver'],'ESRIJSON');self.assertLess(d.geometries[0].centroid.x,.02)
             self.assertEqual(len(load_buildings(path,Rules()).features),1)
 
     def test_zip_shapefile_and_gdb(self):
@@ -82,7 +82,7 @@ class ImportTests(unittest.TestCase):
 
     def test_json_table_and_csv_projected_coordinate_fields(self):
         with tempfile.TemporaryDirectory() as td:
-            root=Path(td);path=root/'data.json';path.write_text(json.dumps([{'opco':'NG','grid_id':'001','population':100}]))
+            root=Path(td);path=root/'data.json';path.write_text(json.dumps([{'opco':'NG','grid_id':'001','population':100}]),encoding='utf-8')
             d=read_source(path);self.assertEqual(d.frame.grid_id.iloc[0],'001')
             frame=pd.DataFrame({'latitude':['0'],'longitude':['1000']});from gis_io import Dataset
             f,m,_=normalize_role(Dataset(frame),'airtel',{'lat':'latitude','lon':'longitude'},{'crs_override':'EPSG:3857'})
@@ -124,7 +124,7 @@ class ImportTests(unittest.TestCase):
     def test_driver_report_and_directory_manifest(self):
         self.assertIn('OpenFileGDB',driver_report()['drivers'])
         with tempfile.TemporaryDirectory() as td:
-            path=Path(td)/'dataset.gdb';path.mkdir();(path/'component').write_text('test')
+            path=Path(td)/'dataset.gdb';path.mkdir();(path/'component').write_text('test',encoding='utf-8')
             self.assertIn('metadata manifest',source_fingerprint(path)['fingerprint_method'])
 
 if __name__=='__main__':unittest.main(verbosity=2)

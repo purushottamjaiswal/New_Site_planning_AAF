@@ -50,9 +50,9 @@ class BuildingTests(unittest.TestCase):
 
     def test_confidence_and_invalid_polygon_rejection(self):
         with tempfile.TemporaryDirectory() as td:
-            path=Path(td)/'buildings.geojson';path.write_text(json.dumps({'type':'FeatureCollection','features':[footprint(confidence=.5)]}))
+            path=Path(td)/'buildings.geojson';path.write_text(json.dumps({'type':'FeatureCollection','features':[footprint(confidence=.5)]}),encoding='utf-8')
             with self.assertRaisesRegex(ValueError,'No usable building'):load_buildings(path,Rules())
-            path.write_text(json.dumps({'type':'FeatureCollection','features':[footprint(),{'type':'Feature','geometry':{'type':'Point','coordinates':[.01,0]},'properties':{}}]}))
+            path.write_text(json.dumps({'type':'FeatureCollection','features':[footprint(),{'type':'Feature','geometry':{'type':'Point','coordinates':[.01,0]},'properties':{}}]}),encoding='utf-8')
             ctx=load_buildings(path,Rules());self.assertEqual(len(ctx.features),1);self.assertEqual(len(ctx.issues),1)
 
     def test_google_wkt_gzip_streaming(self):
@@ -92,7 +92,7 @@ class BuildingTests(unittest.TestCase):
 
     def test_large_import_can_be_cancelled(self):
         with tempfile.TemporaryDirectory() as td:
-            path=Path(td)/'footprints.geojson';path.write_text(json.dumps({'type':'FeatureCollection','features':[footprint() for _ in range(1000)]}))
+            path=Path(td)/'footprints.geojson';path.write_text(json.dumps({'type':'FeatureCollection','features':[footprint() for _ in range(1000)]}),encoding='utf-8')
             with self.assertRaises(InterruptedError):load_buildings(path,Rules(),cancelled=lambda:True)
 
     def test_download_bbox_is_bounded(self):

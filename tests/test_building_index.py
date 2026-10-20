@@ -12,7 +12,7 @@ class DiskIndexTests(unittest.TestCase):
         p=root/'buildings.geojson'
         polygons=[Polygon([(.0098,-.0002),(.0102,-.0002),(.0102,.0002),(.0098,.0002)]),Polygon([(5,5),(5.001,5),(5.001,5.001),(5,5.001)])]
         features=[{'type':'Feature','properties':{'building_id':str(i),'confidence':.9},'geometry':mapping(g)} for i,g in enumerate(polygons)]
-        p.write_text(json.dumps({'type':'FeatureCollection','features':features+[features[0]]}));return p,features
+        p.write_text(json.dumps({'type':'FeatureCollection','features':features+[features[0]]}),encoding='utf-8');return p,features
     def test_building_read_batch_is_separate_and_saved_in_metadata(self):
         from unittest.mock import patch
         from building_stream import building_chunks
@@ -67,7 +67,7 @@ class DiskIndexTests(unittest.TestCase):
         from building_stream import building_layers
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);p,features=self.source(root)
-            p.write_text(json.dumps({'features':features,'type':'FeatureCollection'}))
+            p.write_text(json.dumps({'features':features,'type':'FeatureCollection'}),encoding='utf-8')
             self.assertEqual(building_layers(p)[0]['name'],'buildings')
             ctx=load_buildings(p,Rules(),disk=True,cache_dir=root/'cache')
             self.assertEqual(ctx.count,2);self.assertEqual(ctx.metadata['driver'],'Streaming GeoJSON')
@@ -76,7 +76,7 @@ class DiskIndexTests(unittest.TestCase):
         from building_stream import building_layers
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);p=root/'esri.json'
-            p.write_text(json.dumps({'geometryType':'esriGeometryPolygon','spatialReference':{'wkid':3857},'features':[{'attributes':{'building_id':'E1'},'geometry':{'rings':[[[1000,0],[1100,0],[1100,100],[1000,100],[1000,0]],[[1020,20],[1040,20],[1040,40],[1020,40],[1020,20]]]}}]}))
+            p.write_text(json.dumps({'geometryType':'esriGeometryPolygon','spatialReference':{'wkid':3857},'features':[{'attributes':{'building_id':'E1'},'geometry':{'rings':[[[1000,0],[1100,0],[1100,100],[1000,100],[1000,0]],[[1020,20],[1040,20],[1040,40],[1020,40],[1020,20]]]}}]}),encoding='utf-8')
             self.assertEqual(building_layers(p)[0]['name'],'esri')
             ctx=load_buildings(p,Rules(),disk=True,cache_dir=root/'cache')
             feature=ctx.features[0];self.assertLess(feature['geometry']['coordinates'][0][0][0],.02)

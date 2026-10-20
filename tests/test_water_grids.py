@@ -59,9 +59,9 @@ class WaterGridTests(unittest.TestCase):
     def test_empty_water_and_line_only_water_fail_closed(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);paths={**self.inputs(root),**masks(root)};p=Path(paths['water_polygons'])
-            p.write_text(json.dumps({'type':'FeatureCollection','features':[]}))
+            p.write_text(json.dumps({'type':'FeatureCollection','features':[]}),encoding='utf-8')
             with self.assertRaises(ValueError):run_paths(paths,Rules(),log=lambda s:None)
-            p.write_text(json.dumps({'type':'FeatureCollection','features':[{'type':'Feature','properties':{},'geometry':{'type':'LineString','coordinates':[[0,0],[1,1]]}}]}))
+            p.write_text(json.dumps({'type':'FeatureCollection','features':[{'type':'Feature','properties':{},'geometry':{'type':'LineString','coordinates':[[0,0],[1,1]]}}]}),encoding='utf-8')
             with self.assertRaises(ValueError):run_paths(paths,Rules(),log=lambda s:None)
     def test_nominal_metric_square_at_nigeria_latitude(self):
         geod=Geod(ellps='WGS84')

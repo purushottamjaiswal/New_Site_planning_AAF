@@ -19,7 +19,7 @@ class ReleaseTests(unittest.TestCase):
             p=root/(role+'.csv');frame.to_csv(p,index=False);paths[role]=str(p)
         return {**paths,**masks(root)}
     def polygon_file(self,root,name,features):
-        p=root/(name+'.geojson');p.write_text(json.dumps({'type':'FeatureCollection','features':features}));return str(p)
+        p=root/(name+'.geojson');p.write_text(json.dumps({'type':'FeatureCollection','features':features}),encoding='utf-8');return str(p)
     def test_assignment_export_aggregates_real_parent_grid_ids(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);raw=fixtures();raw['demand_points']=pd.DataFrame({'opco':['NG','NG'],'point_id':['p1','p2'],'grid_id':['e','e'],'latitude':[0,0],'longitude':[.068,.071],'demand':[100,200]})
@@ -174,10 +174,10 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             master=tk.Tcl();defaults=Rules();values={f.name:(tk.BooleanVar(master,value=getattr(defaults,f.name)) if isinstance(getattr(defaults,f.name),bool) else tk.StringVar(master,value=str(getattr(defaults,f.name)))) for f in fields(Rules)}
             holder=SimpleNamespace(busy=False,values=values,paths={},maps={},output=tk.StringVar(master),location_search_enabled=tk.BooleanVar(master,value=False),show_source_profile=lambda:None,update_location_search=lambda:None)
-            file=Path(td)/'scenario.json';file.write_text(json.dumps({'rules':asdict(defaults)}))
+            file=Path(td)/'scenario.json';file.write_text(json.dumps({'rules':asdict(defaults)}),encoding='utf-8')
             with patch('app.filedialog.askopenfilename',return_value=str(file)):App.load_scenario(holder)
             self.assertEqual(App.get_rules(holder).location_mode,'Area search');self.assertTrue(holder.location_search_enabled.get())
-            file.write_text(json.dumps({'rules':asdict(Rules(location_mode='Quick demo (grid centroid)')),'ui_state':{'location_search_enabled':False,'detailed_values':{'location_mode':'Supplied candidates','search_spacing_m':'500','max_candidate_points':'1000000','building_rule':'Rooftop search'}}}))
+            file.write_text(json.dumps({'rules':asdict(Rules(location_mode='Quick demo (grid centroid)')),'ui_state':{'location_search_enabled':False,'detailed_values':{'location_mode':'Supplied candidates','search_spacing_m':'500','max_candidate_points':'1000000','building_rule':'Rooftop search'}}}),encoding='utf-8')
             with patch('app.filedialog.askopenfilename',return_value=str(file)):App.load_scenario(holder)
             self.assertEqual(App.get_rules(holder).location_mode,'Quick demo (grid centroid)');holder.location_search_enabled.set(True);self.assertEqual(App.get_rules(holder).location_mode,'Supplied candidates');self.assertEqual(App.get_rules(holder).max_candidate_points,1000000)
 

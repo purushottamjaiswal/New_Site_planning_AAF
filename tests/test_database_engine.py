@@ -59,7 +59,7 @@ class DatabaseTests(unittest.TestCase):
             finally:result.close()
     def test_chunked_json_records_and_csv_without_reader_cap(self):
         with tempfile.TemporaryDirectory() as td:
-            root=Path(td);path=root/'table.json';path.write_text(json.dumps([{'id':str(i)} for i in range(301)]))
+            root=Path(td);path=root/'table.json';path.write_text(json.dumps([{'id':str(i)} for i in range(301)]),encoding='utf-8')
             pieces=list(stream_source(path,batch_size=100));self.assertEqual([len(p.frame) for p in pieces],[100,100,100,1])
             path=root/'table.csv';pd.DataFrame({'id':range(301)}).to_csv(path,index=False)
             self.assertEqual(sum(len(p.frame) for p in stream_source(path,batch_size=100)),301)

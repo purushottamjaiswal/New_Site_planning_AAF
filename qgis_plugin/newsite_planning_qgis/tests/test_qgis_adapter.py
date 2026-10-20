@@ -20,7 +20,7 @@ class AdapterTests(unittest.TestCase):
 
     def test_actual_parent_boundary_rejects_nominally_inside_point(self):
         with tempfile.TemporaryDirectory() as td:
-            path=Path(td)/'grid.geojson';path.write_text(json.dumps(geo([Polygon([(0,-.002),(.002,-.002),(.002,.002),(0,.002)])])))
+            path=Path(td)/'grid.geojson';path.write_text(json.dumps(geo([Polygon([(0,-.002),(.002,-.002),(.002,.002),(0,.002)])])),encoding='utf-8')
             raw=self.raw();raw['_constraints']=PolygonConstraints(path,country='NG')
             p=plan_frames(raw,self.rules(),log=lambda s:None)
             self.assertEqual(p.sites.source_candidate_id.tolist(),['inside'])
@@ -29,7 +29,7 @@ class AdapterTests(unittest.TestCase):
     def test_no_build_hole_is_permitted_but_boundary_is_blocked(self):
         with tempfile.TemporaryDirectory() as td:
             outer=[(0,-.002),(.004,-.002),(.004,.002),(0,.002)];hole=[(.0005,-.0005),(.0015,-.0005),(.0015,.0005),(.0005,.0005)]
-            path=Path(td)/'blocked.geojson';path.write_text(json.dumps(geo([Polygon(outer,[hole])])))
+            path=Path(td)/'blocked.geojson';path.write_text(json.dumps(geo([Polygon(outer,[hole])])),encoding='utf-8')
             raw=self.raw();raw['_constraints']=PolygonConstraints(no_build_path=path)
             p=plan_frames(raw,self.rules(),log=lambda s:None);self.assertEqual(p.sites.source_candidate_id.tolist(),['inside'])
             raw['candidates']=candidates([['NG','hole_edge','a',0,.0005,'Yes']])
@@ -37,7 +37,7 @@ class AdapterTests(unittest.TestCase):
 
     def test_invalid_constraint_geometry_fails(self):
         with tempfile.TemporaryDirectory() as td:
-            path=Path(td)/'invalid.geojson';path.write_text(json.dumps(geo([Polygon([(0,0),(1,1),(1,0),(0,1)])])))
+            path=Path(td)/'invalid.geojson';path.write_text(json.dumps(geo([Polygon([(0,0),(1,1),(1,0),(0,1)])])),encoding='utf-8')
             with self.assertRaisesRegex(ValueError,'Invalid/non-polygon'):PolygonConstraints(path)
 
     def test_actual_area_controls_density_and_population_conversion(self):
@@ -53,10 +53,10 @@ class AdapterTests(unittest.TestCase):
             base=Path(td);raw=self.raw();paths={}
             for kind,frame in raw.items():
                 target=base/(kind+'.csv');frame.to_csv(target,index=False);paths[kind]=str(target)
-            boundary=base/'grid.geojson';boundary.write_text(json.dumps(geo([Polygon([(0,-.002),(.002,-.002),(.002,.002),(0,.002)])])));paths['grid_boundaries']=str(boundary)
+            boundary=base/'grid.geojson';boundary.write_text(json.dumps(geo([Polygon([(0,-.002),(.002,-.002),(.002,.002),(0,.002)])])),encoding='utf-8');paths['grid_boundaries']=str(boundary)
             for role,geom in [('land_polygons',Polygon([(-179,-80),(179,-80),(179,80),(-179,80)])),('water_polygons',Polygon([(-160,-70),(-159,-70),(-159,-69),(-160,-69)]))]:
-                p=base/(role+'.geojson');p.write_text(json.dumps(geo([geom])));paths[role]=str(p)
-            cfg=base/'job.json';cfg.write_text(json.dumps({'paths':paths,'rules':vars(self.rules()),'output_dir':str(base/'out')}))
+                p=base/(role+'.geojson');p.write_text(json.dumps(geo([geom])),encoding='utf-8');paths[role]=str(p)
+            cfg=base/'job.json';cfg.write_text(json.dumps({'paths':paths,'rules':vars(self.rules()),'output_dir':str(base/'out')}),encoding='utf-8')
             run=subprocess.run([sys.executable,str(ROOT/'worker.py'),'--job',str(cfg)],capture_output=True,text=True,timeout=30)
             self.assertEqual(run.returncode,0,run.stdout+run.stderr)
             messages=[json.loads(line) for line in run.stdout.splitlines()];result=next(m for m in messages if m['event']=='result')

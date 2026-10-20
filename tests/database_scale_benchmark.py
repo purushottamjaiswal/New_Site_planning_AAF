@@ -32,4 +32,4 @@ with tempfile.TemporaryDirectory(prefix='aaf_scale_check_') as td:
   report={'fixture':'Synthetic source/selection stress trial; not operational network data','population_source_rows':1010051,'stored_input_rows':input_rows,'target_grids':10050,'requested_sites':12000,'selected_sites':len(result.sites),'full_exported_sites':exported,'page_offset_10000_rows':50,'assigned_demand':result.summary['incremental_demand_total'],'sqlite_bytes':bytes_db,'peak_process_rss_mib_linux':round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024,2),'elapsed_seconds_including_generation_export':round(time.monotonic()-start,2),'import_batch_rows':2000,'selection':'Global lazy greedy; no global link list or heap in RAM'}
  finally:result.close()
  report['temporary_database_removed']=not dbpath.exists();assert report['temporary_database_removed']
- Path(__file__).with_name('water_grid_scale_check.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2),flush=True)
+ Path(__file__).with_name('water_grid_scale_check.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8');print(json.dumps(report,indent=2),flush=True)

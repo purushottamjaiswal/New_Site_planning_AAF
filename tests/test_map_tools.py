@@ -14,7 +14,7 @@ class MapToolTests(unittest.TestCase):
             try:
                 for i in range(10050):session.add('sites',{'candidate_id':f'NG_NEW_{i+1}','lat':7.,'lon':3.,'rank':i+1})
                 session.add('grids',{'id':'NG_NEW_10050','lat':7.,'lon':3.},json.dumps({'type':'Polygon','coordinates':[[[2.99,6.99],[3.01,6.99],[3.01,7.01],[2.99,6.99]]]}));session.db.commit()
-                (root/'run_settings.json').write_text(json.dumps({'temporary_database':str(session.path)}));server=LocalMapServer(root)
+                (root/'run_settings.json').write_text(json.dumps({'temporary_database':str(session.path)}),encoding='utf-8');server=LocalMapServer(root)
                 def search(value,layer='all'):
                     from urllib.parse import urlencode
                     with urllib.request.urlopen('http://127.0.0.1:8765/api/search?'+urlencode({'id':value,'layer':layer})) as response:return json.load(response)
@@ -51,7 +51,7 @@ class MapToolTests(unittest.TestCase):
                 self.assertEqual(text.count('id="toolRadius"'),1)
                 self.assertEqual(text.count('id="toolFind"'),1)
                 self.assertNotIn('__MAP_TOOLS_',text)
-                js=root/(name+'.js');js.write_text('\n'.join(re.findall(r'<script>(.*?)</script>',text,re.S)))
+                js=root/(name+'.js');js.write_text('\n'.join(re.findall(r'<script>(.*?)</script>',text,re.S)),encoding='utf-8')
                 result=subprocess.run([node,'--check',str(js)],capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,result.stderr)
             result=subprocess.run([node,str(Path(__file__).parent/'offline_map_tools_smoke.cjs'),str(root/'offline.html')],capture_output=True,text=True)
@@ -76,7 +76,7 @@ element('toolSearch').value='NG_NEW_10050';element('toolSearchLayer').value='all
 (async()=>{await element('toolFind').onclick();assert.equal(chosen,f);assert.match(element('toolSearchStatus').textContent,/all run results/);assert.equal(element('toolSearchResults').children.length,1);global.fetch=async()=>{throw Error('closed')};await element('toolFind').onclick();assert.match(element('toolSearchStatus').textContent,/saved\/loaded preview/);assert.ok(redraw>4);console.log('Shared map tools geometry and interactions passed')})().catch(e=>{console.error(e);process.exit(1)});
 '''
         with tempfile.TemporaryDirectory() as td:
-            path=Path(td)/'tools.cjs';path.write_text(harness+SCRIPT+checks)
+            path=Path(td)/'tools.cjs';path.write_text(harness+SCRIPT+checks,encoding='utf-8')
             result=subprocess.run([node,str(path)],capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
 

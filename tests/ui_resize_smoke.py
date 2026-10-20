@@ -1,5 +1,5 @@
 """Native Tk geometry smoke check. Run under a desktop or Xvfb, not unittest discovery."""
-import sys,json,time
+import sys,json,time,platform
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from app import App
@@ -38,4 +38,4 @@ app.show_result_page();assert len(app.tree.get_children())==200
 app.show_result_page(10000);assert len(app.tree.get_children())==50
 app.on_close();assert not path.exists()
 assert not errors,errors
-print(json.dumps({'native_toolkit':'Tk under virtual Linux display','checks':records,'callback_errors':errors,'large_results_rows':10050,'first_page_rows':200,'last_page_rows':50,'temporary_session_removed_on_close':True,'windows_interaction':'not tested'},indent=2))
+print(json.dumps({'native_toolkit':'Tk on '+platform.system(),'checks':records,'callback_errors':errors,'large_results_rows':10050,'first_page_rows':200,'last_page_rows':50,'temporary_session_removed_on_close':True,'native_resize_automation':'passed', 'manual_interaction':'not tested'},indent=2))
