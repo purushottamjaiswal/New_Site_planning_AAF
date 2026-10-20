@@ -31,20 +31,22 @@ class Session:
         self.db.executescript('''CREATE TABLE inputs(rid INTEGER PRIMARY KEY,role TEXT,country TEXT,gid TEXT,size TEXT,period TEXT,payload TEXT,raw_data TEXT,geometry TEXT);
         CREATE INDEX input_scope ON inputs(role,country,period,size,gid); CREATE INDEX input_ids ON inputs(role,country,gid);
         CREATE TABLE issues(rid INTEGER PRIMARY KEY,payload TEXT);''')
-        for table in ('grids','airtel','competitors','infrastructure','buffers','no_build','land','water','demand','candidates','sites'):
+        for table in ('grids','airtel','competitors','infrastructure','buffers','no_build','land','water','demand','candidates','sites','network','rf_coverage'):
             self.db.execute(f'CREATE TABLE {table}(rid INTEGER PRIMARY KEY,gid TEXT,lat REAL,lon REAL,payload TEXT,geometry TEXT)')
             self.db.execute(f'CREATE INDEX {table}_gid ON {table}(gid)')
             if table in ('grids','sites','airtel','competitors'):self.db.execute(f'CREATE INDEX {table}_search_id ON {table}(gid COLLATE NOCASE)')
             self.db.execute(f'CREATE VIRTUAL TABLE {table}_rt USING rtree(rid,minx,maxx,miny,maxy)')
         self.db.executescript('''ALTER TABLE demand ADD COLUMN assigned TEXT DEFAULT ''; ALTER TABLE demand ADD COLUMN distance REAL;
-        ALTER TABLE candidates ADD COLUMN allowed INTEGER DEFAULT 1; ALTER TABLE candidates ADD COLUMN score REAL DEFAULT 0; ALTER TABLE candidates ADD COLUMN stamp INTEGER DEFAULT -1;
-        CREATE INDEX candidate_priority ON candidates(allowed,score DESC,rid); CREATE INDEX demand_assigned ON demand(assigned,gid);
+        ALTER TABLE candidates ADD COLUMN allowed INTEGER DEFAULT 1; ALTER TABLE candidates ADD COLUMN score REAL DEFAULT 0; ALTER TABLE candidates ADD COLUMN stamp INTEGER DEFAULT -1; ALTER TABLE candidates ADD COLUMN red_score REAL DEFAULT 0;
+        CREATE INDEX candidate_priority ON candidates(allowed,score DESC,rid); CREATE INDEX candidate_red_priority ON candidates(allowed,red_score DESC,score DESC,rid); CREATE TABLE alternatives(payload TEXT); CREATE INDEX alternatives_site ON alternatives(json_extract(payload,'$.selected_candidate')); CREATE INDEX demand_assigned ON demand(assigned,gid); CREATE INDEX demand_parent ON demand(json_extract(payload,'$.grid_id')); CREATE INDEX candidate_parent ON candidates(json_extract(payload,'$.grid_id'),allowed,score DESC);
         CREATE TABLE selected_stats(gid TEXT PRIMARY KEY,total REAL,weighted_distance REAL,count_sites INTEGER,ids TEXT);''')
         self.metadata={};self.buildings=None;atexit.register(self.close)
     def check(self):
         if self.cancelled():raise InterruptedError('Planning cancelled; temporary session will be removed.')
     def close(self):
         if not self.closed:
+
+            if getattr(self,'engineering',None):self.engineering.close()
             self.db.close();shutil.rmtree(self.folder,ignore_errors=True);self.closed=True;atexit.unregister(self.close)
     def issue(self,role,row,reason):self.db.execute('INSERT INTO issues(payload) VALUES(?)',(encode({'source':role,'source_row':row.get('source_row'),'id':row.get('id',''),'reason':reason}),))
     def add(self,table,row,geometry=None):
@@ -92,11 +94,28 @@ class Session:
         from shapely.geometry import mapping as geom_mapping
         mappings=mappings or {};options=source_options or {}
         for role,path in paths.items():
-            if not path or role=='buildings':continue
+            if not path or role in ('buildings','terrain','grid_boundaries'):continue
             self.check();self.log(f'Importing {role} into temporary database: {Path(path).name}')
-            opt=options.get(role,{});mapping=None;count=0
+            opt=options.get(role,{});mapping=None;count=0;stored=0
             for data in stream_source(path,layer=opt.get('layer'),crs_override=opt.get('crs_override'),batch_size=self.batch_size,cancelled=self.cancelled):
-                if role in ('no_build_polygons','land_polygons','water_polygons'):
+                if role in ('road_lines','backhaul_lines','power_lines','rf_coverage'):
+                    if data.geometries is None:raise ValueError(role+': geometry and CRS are required.')
+                    for i,geom in enumerate(data.geometries):
+                        if geom is None or geom.is_empty or not geom.is_valid:raise ValueError(role+': invalid geometry.')
+                        props=data.frame.iloc[i].to_dict();table='rf_coverage' if role=='rf_coverage' else 'network'
+                        if role=='rf_coverage':
+                            if geom.geom_type not in ('Polygon','MultiPolygon'):raise ValueError('RF evidence must be coverage polygons.')
+                            if not all(str(props.get(k,'')).strip() for k in ('candidate_id','calibration_id','validation_date')) or str(props.get('validated','')).lower() not in ('yes','true','1'):raise ValueError('RF footprints require candidate_id, calibration_id, validation_date and validated=Yes. Supply externally validated footprints, not assumed circles.')
+                            from datetime import date
+                            try:date.fromisoformat(str(props['validation_date']))
+                            except ValueError:raise ValueError('RF validation_date must be YYYY-MM-DD.')
+                            props['id']=str(props['candidate_id']).strip()
+                        else:
+                            if geom.geom_type not in ('LineString','MultiLineString'):raise ValueError(role+': use line or multiline geometry.')
+                            props.update(id=str(count),kind=role.split('_')[0])
+                        props.update(lat=geom.centroid.y,lon=geom.centroid.x);rid=self.add(table,props,json.dumps(geom_mapping(geom)));w,south,e,n=geom.bounds
+                        self.db.execute(f'UPDATE {table}_rt SET minx=?,maxx=?,miny=?,maxy=? WHERE rid=?',(w,e,south,n,rid));count+=1
+                elif role in ('no_build_polygons','land_polygons','water_polygons'):
                     if data.geometries is None:raise ValueError(f'{role}: select a polygon layer with known CRS.')
                     for geom_index,geom in enumerate(data.geometries):
                         if geom is None or geom.geom_type not in ('Polygon','MultiPolygon') or not geom.is_valid or geom.is_empty:raise ValueError(f'{role}: invalid or non-polygon geometry; repair the source. River centre lines require an actual width-based polygon.')
@@ -111,8 +130,12 @@ class Session:
                     if role not in ALIASES:raise ValueError('Unknown data source role: '+role)
                     if mapping is None:mapping,_=match_mapping(data.frame,role,mappings.get(role,ALIASES[role]),ALIASES[role])
                     frame,effective,polygons=normalize_role(data,role,mapping,opt);canon=canonical(frame,role,effective);canon['source_row']=np.arange(len(canon))+count+2
+                    keep=canon.country.eq(rules.country.upper()) if 'country' in canon else pd.Series(True,index=canon.index)
+                    if role=='grid':keep &= canon['size'].str.lower().str.replace(' ','').eq(rules.grid_size)&canon.period.eq(rules.grid_period)
+                    if role=='airtel':keep &= canon.period.eq(rules.airtel_period)
                     raw=data.frame.to_dict('records')
                     for i,row in enumerate(canon.to_dict('records')):
+                        if not keep.iloc[i]:continue
                         if role=='grid':row['size']=str(row['size']).lower().replace(' ','')
                         geom=None
                         if role=='grid' and data.geometries is not None:
@@ -121,13 +144,31 @@ class Session:
                         self.db.execute('INSERT INTO inputs(role,country,gid,size,period,payload,raw_data,geometry) VALUES(?,?,?,?,?,?,?,?)',
                             (role,row.get('country',''),row.get('id',''),row.get('size',''),row.get('period',''),encode(row),encode(raw[i]),geom))
                     count+=len(canon)
-                self.metadata[role]={**data.metadata,'mapping':effective if role not in ('no_build_polygons','land_polygons','water_polygons') else {},'records':count,'storage':'temporary SQLite'}
+                self.metadata[role]={**data.metadata,'mapping':effective if role in ALIASES else {},'records':self.count('inputs',"role=?",(role,)) if role in ALIASES else count,'source_records_scanned':count,'storage':'temporary SQLite'}
                 self.db.commit()
-                if count%20000<self.batch_size:self.log(f'{role}: {count:,} records stored')
+                if count%20000<self.batch_size:self.log(f'{role}: {count:,} source records scanned; selected-scope rows staged')
             if not count and role in ('grid','airtel','candidates','land_polygons','water_polygons'):raise ValueError(f'{role}: source is empty.')
+        if paths.get('grid_boundaries'):
+            for data in stream_source(paths['grid_boundaries'],batch_size=self.batch_size,cancelled=self.cancelled):
+                if data.geometries is None:raise ValueError('Grid boundaries need polygon geometry.')
+                for i,geom in enumerate(data.geometries):
+                    props=data.frame.iloc[i].to_dict();gid=str(props.get('grid_id',''));country=str(props.get('opco',rules.country)).upper()
+                    if country!=rules.country.upper():continue
+                    if not gid or geom is None or geom.geom_type not in ('Polygon','MultiPolygon') or not geom.is_valid:raise ValueError('Invalid supplemental grid boundary.')
+                    self.db.execute("UPDATE inputs SET geometry=? WHERE role='grid' AND country=? AND gid=?",(json.dumps(geom_mapping(geom)),country,gid))
+            self.db.commit()
         if paths.get('buildings'):
             from buildings import load_buildings
-            opt=options.get('buildings',{});self.buildings=load_buildings(paths['buildings'],rules,self.cancelled,layer=opt.get('layer'),crs_override=opt.get('crs_override'),disk=True,cache_dir=self.folder/'building_index',log=self.log)
+            from dataclasses import replace
+            bounds=self.db.execute("SELECT min(CAST(json_extract(payload,'$.lon') AS REAL)),min(CAST(json_extract(payload,'$.lat') AS REAL)),max(CAST(json_extract(payload,'$.lon') AS REAL)),max(CAST(json_extract(payload,'$.lat') AS REAL)) FROM inputs WHERE role='grid'").fetchone()
+            building_rules=rules
+            if bounds[0] is not None:
+                w,south,e,n=bounds;margin=(rules.service_radius_km+5)/110;dx=margin/max(.01,math.cos(math.radians(max(abs(south),abs(n)))))
+                clip=[max(-90,south-margin),max(-180,w-dx),min(90,n+margin),min(180,e+dx)]
+                if rules.building_clip_bbox:
+                    a,b,c,d=map(float,rules.building_clip_bbox.split(','));clip=[max(a,clip[0]),max(b,clip[1]),min(c,clip[2]),min(d,clip[3])]
+                building_rules=replace(rules,building_clip_bbox=','.join(map(str,clip)))
+            opt=options.get('buildings',{});self.buildings=load_buildings(paths['buildings'],building_rules,self.cancelled,layer=opt.get('layer'),crs_override=opt.get('crs_override'),disk=True,cache_dir=self.folder/'building_index',log=self.log)
             self.metadata['buildings']={**self.buildings.metadata,'storage':'temporary SQLite RTree'}
     def spatial(self,table,lat,lon,radius,where='1',params=()):
         # Exact spherical cap bounds, including the date line and poles.

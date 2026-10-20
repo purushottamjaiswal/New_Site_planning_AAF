@@ -28,7 +28,7 @@ class DatabaseResult:
             if columns is None:columns=list(first) if first else []
             with (folder/name).open('w',encoding='utf-8-sig',newline='') as f:
                 writer=csv.DictWriter(f,fieldnames=[rename.get(c,c) for c in columns],extrasaction='ignore');writer.writeheader()
-                def write(row):writer.writerow({rename.get(k,k):v for k,v in row.items() if k in columns})
+                def write(row):writer.writerow({rename.get(k,k):json.dumps(v) if isinstance(v,(list,dict)) else v for k,v in row.items() if k in columns})
                 if first is not None:write(first)
                 for index,row in enumerate(iterator,1):
                     if index%2000==0:s.check()
@@ -38,13 +38,14 @@ class DatabaseResult:
             if table!='issues':
                 for key, in s.db.execute(f'SELECT DISTINCT j.key FROM {table}, json_each({table}.payload) j'):keys.setdefault(key,None)
             return list(keys)
+        csv_export('alternative_candidates.csv',(json.loads(x[0]) for x in s.db.execute('SELECT payload FROM alternatives')),['selected_candidate','comparison_basis','source_candidate_id','grid_id','lat','lon','weighted_benefit','incremental_demand','red_demand','amber_demand'])
         csv_export('proposed_sites.csv',rows('sites'),SITE_COLUMNS)
         csv_export('grid_assessment.csv',rows('grids'),schema('grids'),{'id':'grid_id','size':'grid_size','country':'opco'})
         csv_export('candidate_location_assessment.csv',rows('candidates'),schema('candidates'))
         csv_export('demand_point_assessment.csv',rows('demand'),schema('demand'))
         csv_export('demand_point_assignments.csv',rows('demand',"assigned<>''"),schema('demand'))
         def assignments():
-            query="SELECT assigned,gid,SUM(json_extract(payload,'$.demand')),COUNT(*) FROM demand WHERE assigned<>'' GROUP BY assigned,gid ORDER BY assigned,gid"
+            query="SELECT assigned,json_extract(payload,'$.grid_id'),SUM(json_extract(payload,'$.demand')),COUNT(*) FROM demand WHERE assigned<>'' GROUP BY assigned,json_extract(payload,'$.grid_id') ORDER BY assigned,json_extract(payload,'$.grid_id')"
             for cid,gid,total,count in s.db.execute(query):yield dict(assigned_candidate=cid,grid_id=gid,assigned_demand=total,assigned_points=count)
         csv_export('site_grid_assignments.csv',assignments(),['assigned_candidate','grid_id','assigned_demand','assigned_points'])
         csv_export('data_quality_issues.csv',rows('issues'),['source','source_row','id','reason'])
@@ -64,7 +65,19 @@ class DatabaseResult:
         if s.count('no_build'):geojson('no_build_polygons_used.geojson','no_build',True)
         if self.buildings_context:self.buildings_context.export_geojson(folder/'building_footprints_used.geojson')
         self.summary['grid_bounds']=s.db.execute('SELECT min(minx),min(miny),max(maxx),max(maxy) FROM grids_rt').fetchone()
-        metadata={'rules':asdict(self.rules),'summary':self.summary,'sources':{key:source_fingerprint(path) for key,path in (paths or {}).items() if path},'source_layers_and_crs':self.input_metadata,'temporary_database':str(s.path),'temporary_database_lifecycle':'Removed when this result/session is closed. Full output tables are already exported. Map viewport endpoints require the active session.'}
+        if self.rules.export_gpkg:
+            from gpkg_export import export_results
+            export_results(s,folder/'planning_results.gpkg')
+        project_path=None
+        if self.rules.persist_project:
+            from project_review import save_project
+            project_path=save_project(s,folder,self.rules,paths or {})
+            self.summary['project_database']=str(project_path)
+        if project_path and self.buildings_context:
+            self.input_metadata={**self.input_metadata,'buildings':{**self.input_metadata.get('buildings',{}),'index_path':str(folder/'building_index.sqlite')}}
+        import importlib.metadata,platform,sys
+        versions={name:importlib.metadata.version(name) for name in ('numpy','pandas','scipy','shapely','pyproj','pyogrio','ijson','rasterio')}
+        metadata={'software_versions':{'python':sys.version,'platform':platform.platform(),**versions},'engine_version':'7.0','result_database':str(project_path) if project_path else None,'rules':asdict(self.rules),'summary':self.summary,'sources':{key:source_fingerprint(path) for key,path in (paths or {}).items() if path},'source_layers_and_crs':self.input_metadata,'temporary_database':str(s.path),'temporary_database_lifecycle':'Removed when this result/session is closed. Full output tables are already exported. Map viewport endpoints require the active session.'}
         (folder/'run_settings.json').write_text(json.dumps(clean(metadata),indent=2,allow_nan=False),encoding='utf-8')
         # Only bounded frames reach the legacy HTML renderers.
         from shapely.geometry import shape
@@ -74,13 +87,16 @@ class DatabaseResult:
                 if col not in frame:frame[col]=pd.Series(dtype=object)
         polygon_grids={row['id']:shape(json.loads(geom)) for _,row,geom in s.records('grids',limit=5000) if geom}
         exclusions=[shape(json.loads(geom)) for _,_,geom in s.records('no_build',limit=5000)]
-        preview_summary={**self.summary,'notes':self.summary['notes']+['Initial map previews: up to 500 planned sites, 5,000 grids and 5,000 records per inventory. Full CSV/GeoJSON exports include every result; live offline/OpenLayers viewport queries retrieve local records.']}
+        preview_summary={**self.summary,'database_path':str(project_path) if project_path else str(s.path),'notes':self.summary['notes']+['Initial map previews: up to 500 planned sites, 5,000 grids and 5,000 records per inventory. Full CSV/GeoJSON exports include every result; live offline/OpenLayers viewport queries retrieve local records.']}
         preview=SimpleNamespace(sites=sites,grids=grids,airtel=airtel,competitors=comp,demand_points=pd.DataFrame(columns=['basis','point_id','grid_id','lat','lon','demand','assigned_candidate']),summary=preview_summary,rules=self.rules,buildings_context=self.buildings_context,polygon_context=SimpleNamespace(grids=polygon_grids,exclusions=exclusions))
         from map_report import write_map
         from web_maps import write_web_map
         from openlayers_map import write_openlayers_map
         write_map(preview,folder/'planning_map.html');write_web_map(preview,folder/'planning_web_map.html');write_openlayers_map(preview,folder/'planning_openlayers_map.html')
         self.export_earth(folder/'planning_google_earth.kml')
+        runner=Path(__file__).with_name('review_project.py').resolve()
+        (folder/'Open_Result_Map.bat').write_text('@echo off\n"'+str(Path(__import__('sys').executable))+'" "'+str(runner)+'" --folder "'+str(folder.resolve())+'"\npause\n',encoding='utf-8')
+        (folder/'EXPORT_COMPLETE.txt').write_text('Export completed. Original plan is immutable; draft reviews are stored separately.\n')
         s.log('Full tables exported in batches; desktop and static-map previews are paginated/capped.')
         return folder
     def export_earth(self,path):

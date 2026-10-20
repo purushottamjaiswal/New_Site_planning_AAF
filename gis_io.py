@@ -9,7 +9,7 @@ from shapely import from_wkb,from_wkt,transform as transform_geometry
 from shapely.geometry import Point,LineString,Polygon,MultiPolygon,MultiPoint,MultiLineString,GeometryCollection,box
 from shapely.geometry.polygon import orient
 
-FILE_TYPES=[('GIS / tables','*.csv *.csv.gz *.shp *.gpkg *.kml *.kmz *.geojson *.json *.gdbtable *.gdb.zip *.zip *.fgb *.sqlite *.gml *.tab *.dbf *.parquet'),('All files','*.*')]
+FILE_TYPES=[('GIS / tables','*.csv *.csv.gz *.shp *.gpkg *.kml *.kmz *.geojson *.json *.gdbtable *.gdb.zip *.zip *.fgb *.sqlite *.gml *.tab *.dbf *.parquet *.tif *.tiff'),('All files','*.*')]
 
 @dataclass
 class Dataset:
@@ -155,7 +155,7 @@ def _reproject(geometries,crs,override=None):
     return geometries,source.to_string()
 
 
-def iter_source(path,layer=None,crs_override=None,chunk_size=20000,nrows=None,bbox=None,cancelled=lambda:False):
+def iter_source(path,layer=None,crs_override=None,chunk_size=20000,nrows=None,bbox=None,cancelled=lambda:False,memory_mb=None):
     """Yield geometry in WGS84 and attributes. bbox uses west,south,east,north."""
     source=source_path(path)
     if cancelled():raise InterruptedError('Import cancelled.')
@@ -193,6 +193,8 @@ def iter_source(path,layer=None,crs_override=None,chunk_size=20000,nrows=None,bb
     source_bbox=None
     if bbox and has_geometry:
         t=Transformer.from_crs(4326,crs,always_xy=True);source_bbox=t.transform_bounds(*bbox,densify_pts=21)
+    maximum=chunk_size
+    if memory_mb:chunk_size=min(chunk_size,1000)
     skip=0
     while nrows is None or skip<nrows:
         if cancelled():raise InterruptedError('GIS import cancelled.')
@@ -214,6 +216,9 @@ def iter_source(path,layer=None,crs_override=None,chunk_size=20000,nrows=None,bb
         yield Dataset(frame,geoms,{'driver':info['driver'],'layer':name,'source':str(path),'source_crs':actual_crs,'coordinate_crs':'EPSG:4326' if geoms is not None else None})
         skip+=count
         if count<size:break
+        if memory_mb and len(frame):
+            estimated=frame.memory_usage(deep=True).sum()+sum(len(g.wkb)*3 for g in geoms if g is not None) if geoms is not None else frame.memory_usage(deep=True).sum()
+            per_row=max(1,estimated/len(frame));chunk_size=max(100,min(maximum,chunk_size*2,int(memory_mb*1024*1024/(per_row*4))))
 
 
 def read_source(path,layer=None,crs_override=None,nrows=None,bbox=None,cancelled=lambda:False,max_records=1000000):

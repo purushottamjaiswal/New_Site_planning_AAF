@@ -1,0 +1,190 @@
+{
+  "defaults": {
+    "country": "NG",
+    "grid_size": "1km",
+    "grid_period": "Sep'26",
+    "airtel_period": "Sep_2026",
+    "mode": "Population",
+    "population_kind": "People per grid",
+    "service_radius_km": 1.5,
+    "min_airtel_km": 0.5,
+    "min_new_km": 1.0,
+    "competitor_radius_km": 1.5,
+    "competitor_boost": 0.25,
+    "red_weight": 1.0,
+    "amber_weight": 0.6,
+    "min_density": 0.0,
+    "min_incremental": 1.0,
+    "max_sites": 30,
+    "import_batch_size": 2000,
+    "building_import_batch_size": 400000,
+    "reserve_planned": true,
+    "respect_site_present": true,
+    "location_mode": "Area search",
+    "search_spacing_m": 250.0,
+    "distance_decay": 0.8,
+    "max_candidate_points": 500000,
+    "max_road_km": 0.0,
+    "max_backhaul_km": 0.0,
+    "max_power_km": 0.0,
+    "target_policy": "Red + Amber",
+    "location_policy": "Current behaviour",
+    "priority_policy": "Weighted demand",
+    "persist_project": true,
+    "export_gpkg": true,
+    "adaptive_import": true,
+    "import_memory_mb": 128,
+    "site_compound_radius_m": 0.0,
+    "water_setback_m": 0.0,
+    "road_setback_m": 10.0,
+    "max_slope_deg": 90.0,
+    "terrain_required": false,
+    "rf_required": false,
+    "building_storage": "Disk index",
+    "building_rule": "Ground clearance",
+    "building_clearance_m": 10.0,
+    "building_context_radius_m": 500.0,
+    "building_density_boost": 0.15,
+    "building_min_confidence": 0.75,
+    "min_roof_area_m2": 80.0,
+    "building_clip_bbox": ""
+  },
+  "aliases": {
+    "grid": {
+      "area": "area_km2_actual",
+      "country": "opco",
+      "id": "grid_id",
+      "lat": "centroid_lat",
+      "lon": "centroid_long",
+      "category": "combined_category_wf",
+      "size": "grid_size",
+      "period": "month",
+      "coverage": "coverage_category",
+      "speed": "throughput_category",
+      "mr": "total_mr_count",
+      "town": "town_name",
+      "site_present": "site_present"
+    },
+    "airtel": {
+      "country": "opco_id",
+      "id": "physical_site_id",
+      "lat": "latitude",
+      "lon": "longitude",
+      "status": "physical_site_status",
+      "technology": "technology",
+      "period": "month"
+    },
+    "competitor": {
+      "country": "OPCO_ID",
+      "id": "SiteID",
+      "lat": "Latitude",
+      "lon": "Longitude",
+      "operator": "OPCO_Comp",
+      "technology": "Technology",
+      "period": "DB_Period"
+    },
+    "population": {
+      "country": "opco",
+      "id": "grid_id",
+      "value": "population"
+    },
+    "candidates": {
+      "country": "opco",
+      "id": "candidate_id",
+      "grid_id": "grid_id",
+      "lat": "latitude",
+      "lon": "longitude",
+      "feasible": "feasible",
+      "suitability": "suitability",
+      "survey_verified": "survey_verified",
+      "accuracy_m": "accuracy_m",
+      "location_source": "location_source"
+    },
+    "demand_points": {
+      "country": "opco",
+      "id": "point_id",
+      "grid_id": "grid_id",
+      "lat": "latitude",
+      "lon": "longitude",
+      "value": "demand"
+    },
+    "exclusions": {
+      "country": "opco",
+      "id": "exclusion_id",
+      "lat": "latitude",
+      "lon": "longitude",
+      "radius_m": "radius_m"
+    },
+    "infrastructure": {
+      "country": "opco",
+      "id": "reference_id",
+      "kind": "kind",
+      "lat": "latitude",
+      "lon": "longitude"
+    }
+  },
+  "required": {
+    "grid": [
+      "country",
+      "id",
+      "lat",
+      "lon",
+      "category",
+      "size",
+      "period"
+    ],
+    "airtel": [
+      "country",
+      "id",
+      "lat",
+      "lon",
+      "status",
+      "technology",
+      "period"
+    ],
+    "competitor": [
+      "country",
+      "id",
+      "lat",
+      "lon",
+      "operator",
+      "technology",
+      "period"
+    ],
+    "population": [
+      "country",
+      "id",
+      "value"
+    ],
+    "candidates": [
+      "country",
+      "id",
+      "grid_id",
+      "lat",
+      "lon",
+      "feasible"
+    ],
+    "demand_points": [
+      "country",
+      "id",
+      "grid_id",
+      "lat",
+      "lon",
+      "value"
+    ],
+    "exclusions": [
+      "country",
+      "id",
+      "lat",
+      "lon",
+      "radius_m"
+    ],
+    "infrastructure": [
+      "country",
+      "id",
+      "kind",
+      "lat",
+      "lon"
+    ]
+  }
+}

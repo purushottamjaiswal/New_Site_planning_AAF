@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
 
+ENGINE_VERSION='7.0'
 EARTH_KM = 6371.0088
 ALIASES = {
  'grid': {'area':'area_km2_actual','country':'opco','id':'grid_id','lat':'centroid_lat','lon':'centroid_long',
@@ -70,6 +71,20 @@ class Rules:
     max_backhaul_km: float = 0.0
     max_power_km: float = 0.0
 
+    target_policy: str = 'Red + Amber'
+    location_policy: str = 'Current behaviour'
+    priority_policy: str = 'Weighted demand'
+    persist_project: bool = True
+    export_gpkg: bool = True
+    adaptive_import: bool = True
+    import_memory_mb: int = 128
+    site_compound_radius_m: float = 0.0
+    water_setback_m: float = 0.0
+    road_setback_m: float = 10.0
+    max_slope_deg: float = 90.0
+    terrain_required: bool = False
+    rf_required: bool = False
+
     building_storage: str = 'Disk index'
     building_rule: str = 'Ground clearance'
     building_clearance_m: float = 10.0
@@ -80,6 +95,12 @@ class Rules:
     building_clip_bbox: str = ''
 
     def validate(self):
+        from planning_policy import TARGETS,LOCATIONS,PRIORITIES
+        if self.target_policy not in TARGETS or self.location_policy not in LOCATIONS or self.priority_policy not in PRIORITIES:raise ValueError('Choose valid demand, location and priority policies.')
+        if not isinstance(self.import_memory_mb,int) or not 16<=self.import_memory_mb<=4096:raise ValueError('Import memory budget must be 16–4096 MiB.')
+        if any(not math.isfinite(v) or not 0<=v<=10000 for v in (self.site_compound_radius_m,self.water_setback_m)):raise ValueError('Compound radius and water setback must be 0–10000 m.')
+        if not math.isfinite(self.road_setback_m) or not 0<=self.road_setback_m<=1000:raise ValueError('Road-line setback must be 0–1000 m.')
+        if not math.isfinite(self.max_slope_deg) or not 0<=self.max_slope_deg<=90:raise ValueError('Maximum slope must be 0–90 degrees.')
         if self.building_storage not in ('Disk index','Regional memory'):raise ValueError('Choose Disk index or Regional memory for building storage.')
         if self.building_rule=='Rooftop search' and self.location_mode in ('Grid centroid (legacy)','Quick demo (grid centroid)'):raise ValueError('Rooftop search requires Area search or Supplied candidates location mode.')
         if self.building_rule not in ('Ground clearance','Context only','Rooftop search'):
@@ -173,7 +194,7 @@ def validate_ids(d, label, keys):
         examples=d.loc[d.duplicated(keys,keep=False),keys].head(4).to_dict('records')
         raise ValueError(f'{label}: duplicate keys {examples}. Resolve duplicate records first.')
 
-SITE_COLUMNS=['rank','candidate_id','country','grid_id','lat','lon','category','town',
+SITE_COLUMNS=['score_breakdown','compound_screening','review_status','red_demand','amber_demand','red_weighted_benefit','selection_explanation','policy','terrain_elevation_m','terrain_slope_deg','rf_evidence','rank','candidate_id','country','grid_id','lat','lon','category','town',
  'incremental_demand','weighted_benefit','assigned_grids','nearest_airtel_km',
  'nearest_airtel_id','nearest_competitor_km','nearest_competitor_id','nearest_competitor_operator',
  'nearest_competitor_period','demand_unit','reason','assigned_points','source_candidate_id','location_basis',

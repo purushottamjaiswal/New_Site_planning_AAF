@@ -1,3 +1,11 @@
+# New Site Planning v7.0
+
+This release fixes assignment grid IDs, actual-polygon demand checks and scenario reload. It adds explicit target/location/priority policies, settlement-guided alternatives, selection explanations, local alternative comparisons, interactive draft review, durable result projects, GeoPackage output, adaptive building reads, optional network-line proximity, DEM slope and imported validated RF footprints.
+
+Read [V7_PLANNING_GUIDE.md](V7_PLANNING_GUIDE.md) before migrating. Extract into a new folder and run Start_Planner.bat so the added DEM dependency is installed. Previous HTML exports must be regenerated. The QGIS v2 worker is built from the same production core using sync_qgis_core.py; its native GUI remains unverified.
+
+Draft review preserves the original official plan. Calibrated propagation is not automatically fitted; RF evidence must be supplied and independently validated. Historical release notes below remain for reference; the v7 guide takes precedence.
+
 ## v6.3: map radius, measuring and ID fly-to
 
 Open the latest run from the desktop application's map buttons. The OpenLayers (Google Road/Satellite/OSM), offline, and alternate Google API/OSM viewers now have **Map tools**:

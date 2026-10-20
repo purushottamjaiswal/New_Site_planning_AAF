@@ -19,7 +19,7 @@ ROOT=Path(__file__).resolve().parent
 
 class App(tk.Tk):
     def __init__(self):
-        super().__init__();self.title('Airtel Africa | New Site Planning v6.3')
+        super().__init__();self.title('Airtel Africa | New Site Planning v7.0')
         width,height=initial_window_size(self.winfo_screenwidth(),self.winfo_screenheight())
         self.geometry(f'{width}x{height}+20+20');self.minsize(min(680,width),min(420,height));self.resizable(True,True)
         self.columnconfigure(0,weight=1);self.rowconfigure(1,weight=1);self.page_hosts={}
@@ -93,7 +93,7 @@ class App(tk.Tk):
     def build_inputs(self):
         ttk.Label(self.inputs,text='Select grid, Airtel site master and competitor inputs. Confirm their snapshots before planning.').pack(anchor='w')
         ttk.Label(self.inputs,text='Load real population by grid for Population mode; MR preview uses a proxy. Inputs are staged in temporary databases when planning starts.').pack(anchor='w',pady=(4,10))
-        files={'grid':'Postgres_Sep_2026(1).csv','airtel':'Sep_26_SM.csv','competitor':'Comp_data.csv','population':('Population_for_Site_Planner.csv' if (ROOT/'data/Population_for_Site_Planner.csv').exists() else ''),'candidates':'','demand_points':'','exclusions':'','infrastructure':'','no_build_polygons':'','land_polygons':'','water_polygons':''}
+        files={'grid':'Postgres_Sep_2026(1).csv','airtel':'Sep_26_SM.csv','competitor':'Comp_data.csv','population':('Population_for_Site_Planner.csv' if (ROOT/'data/Population_for_Site_Planner.csv').exists() else ''),'candidates':'','demand_points':'','exclusions':'','infrastructure':'','no_build_polygons':'','land_polygons':'','water_polygons':'','road_lines':'','backhaul_lines':'','power_lines':'','terrain':'','rf_coverage':''}
         area=ttk.Frame(self.inputs);area.pack(fill='x')
         for i,(kind,filename) in enumerate(files.items()):
             v=tk.StringVar(value=str(ROOT/'data'/filename) if filename else '');self.paths[kind]=v
@@ -126,12 +126,12 @@ class App(tk.Tk):
                ('grid_size','Grid resolution',['1km','3km']),('grid_period','Grid snapshot',[]),
                ('airtel_period','Airtel snapshot',[]),('mode','Demand mode',['Population','MR preview']),
                ('population_kind','Population CSV units',['People per grid','People per km2']),
-               ('min_density','Minimum people / km²',None)]
+               ('min_density','Minimum people / km²',None),('target_policy','Target demand',['Red + Amber','Red only']),('location_policy','Permitted location grids',['Current behaviour','Target grids only','Red grids only','Any selected grid']),('priority_policy','Selection priority',['Weighted demand','Red demand first'])]
         tuning=[('max_sites','Maximum proposed sites',None),('service_radius_km','Assumed service radius (km)',None),
                 ('min_airtel_km','Minimum distance to Airtel (km)',None),('min_new_km','Minimum new-site spacing (km)',None),
                 ('competitor_radius_km','Competitor influence radius (km)',None),('competitor_boost','Competitor boost (0.25 = 25%)',None),
                 ('red_weight','Red grid weight',None),('amber_weight','Amber grid weight',None),
-                ('min_incremental','Minimum incremental people / MR',None)]
+                ('min_incremental','Minimum incremental people / MR',None),('import_memory_mb','Adaptive import target (MiB)',None),('site_compound_radius_m','Ground compound radius (m)',None),('water_setback_m','Water setback (m)',None),('road_setback_m','Road-line setback (m)',None),('max_slope_deg','Maximum DEM slope (degrees)',None)]
         self.rule_boxes={}
         for panel,items in [(left,scope),(right,tuning)]:
             for i,(key,label,options) in enumerate(items):
@@ -140,14 +140,15 @@ class App(tk.Tk):
                 entry=ttk.Combobox(panel,textvariable=v,values=options,width=23) if options is not None else ttk.Entry(panel,textvariable=v,width=25)
                 entry.grid(row=i,column=1,sticky='ew',pady=7);self.rule_boxes[key]=entry
         row=len(scope)
-        for key,label in [('reserve_planned','Reserve planned and under-deployment Airtel sites'),('respect_site_present','Exclude locations in grids with a site-present flag')]:
+        for key,label in [('reserve_planned','Reserve planned and under-deployment Airtel sites'),('respect_site_present','Exclude locations in grids with a site-present flag'),('persist_project','Save a persistent derived-results project'),('export_gpkg','Export GIS results as a GeoPackage'),('adaptive_import','Adapt building batches to the memory target'),('terrain_required','Require DEM terrain screening'),('rf_required','Require validated RF footprints for supplied candidates')]:
             v=tk.BooleanVar(value=getattr(defaults,key));self.values[key]=v
             ttk.Checkbutton(left,text=label,variable=v).grid(row=row,column=0,columnspan=2,sticky='w',pady=8);row+=1
         self.output=tk.StringVar(value=str(ROOT/'outputs'))
         output=ttk.LabelFrame(self.rules_tab,text='Output folder',padding=10);output.grid(row=1,column=0,columnspan=2,sticky='ew',pady=14)
         ttk.Entry(output,textvariable=self.output,width=95).pack(side='left',fill='x',expand=True)
         ttk.Button(output,text='Choose folder',command=self.choose_output).pack(side='left',padx=8)
-        info=('Location search evaluates alternatives or supplied feasible coordinates within target Red/Amber areas. Marginal score = unassigned demand × category weight × competitor factor. '
+        info=('Production engine v7.0 is shared with the updated QGIS worker. Older QGIS v1 releases differ and must not be used for equivalent results. New policy choices explicitly control demand targets and placement. '
+              'Location search evaluates alternatives or supplied feasible coordinates within target Red/Amber areas. Marginal score = unassigned demand × category weight × competitor factor. '
               'Each detailed demand point is assigned once; coarse demand remains represented at its grid centre. Distances use the Earth sphere. Nearby legacy / off-air sites are shown for review. '
               'Radius is a planning assumption, not predicted coverage. Candidate siting, terrain, capacity, land and backhaul need engineering validation. '
               'Use one resolution per run; overlapping 1 km and 3 km grids must never be added together.')
@@ -162,7 +163,7 @@ class App(tk.Tk):
         ttk.Label(self.location_tab,textvariable=self.location_search_status,wraplength=1070).pack(anchor='w',pady=6)
         self.location_search_widgets={}
         frame=ttk.LabelFrame(self.location_tab,text='Location and feasibility settings',padding=14);frame.pack(fill='x')
-        settings=[('location_mode','Location method',['Area search','Supplied candidates','Grid centroid (legacy)']),
+        settings=[('location_mode','Location method',['Area search','Settlement search','Supplied candidates','Grid centroid (legacy)']),
           ('search_spacing_m','Area-search spacing (m)',None),('distance_decay','Distance-decay strength (0–10)',None),
           ('max_candidate_points','Maximum location alternatives',None),('import_batch_size','Input batch rows (memory control)',None),('max_road_km','Maximum road reference distance (km)',None),
           ('max_backhaul_km','Maximum backhaul reference distance (km)',None),('max_power_km','Maximum power reference distance (km)',None)]
@@ -363,6 +364,13 @@ class App(tk.Tk):
                 try:
                     from building_stream import building_layers,building_chunks
                     from stream_io import source_layers,stream_source
+                    if kind=='terrain':
+                        import rasterio
+                        from gis_io import Dataset
+                        import pandas as pd
+                        with rasterio.open(path) as dem:
+                            data=Dataset(pd.DataFrame([{'width':dem.width,'height':dem.height,'crs':str(dem.crs),'nodata':str(dem.nodata)}]),metadata={'driver':dem.driver,'source':path,'source_crs':str(dem.crs)})
+                        self.messages.put(('source_layers',(kind,[{'name':'DEM raster'}],'DEM raster',data,{},[])));return
                     layers=building_layers(path) if kind=='buildings' else source_layers(path);names=[v['name'] for v in layers];selected=opt.get('layer')
                     if selected not in names:selected=names[0] if len(names)==1 else None
                     if selected is None:self.messages.put(('source_layers',(kind,layers,None,None,{},[])));return
@@ -437,7 +445,7 @@ class App(tk.Tk):
     def save_scenario(self):
         if self.busy:return
         try:
-            cfg={'paths':self.get_paths(),'rules':vars(self.get_rules()),'mappings':self.get_maps(),'output_dir':self.output.get(),'source_options':self.get_source_options()}
+            cfg={'paths':self.get_paths(),'rules':vars(self.get_rules()),'ui_state':{'location_search_enabled':self.location_search_enabled.get(),'detailed_values':{k:self.values[k].get() for k in ('location_mode','search_spacing_m','max_candidate_points','building_rule')}},'mappings':self.get_maps(),'output_dir':self.output.get(),'source_options':self.get_source_options()}
             path=filedialog.asksaveasfilename(defaultextension='.json',filetypes=[('Scenario','*.json')])
             if path:Path(path).write_text(json.dumps(cfg,indent=2),encoding='utf-8')
         except Exception as exc:messagebox.showerror('Scenario',str(exc))
@@ -448,10 +456,19 @@ class App(tk.Tk):
         if not path:return
         try:
             cfg=json.loads(Path(path).read_text(encoding='utf-8'))
+            defaults=Rules()
+            for key,value in self.values.items():value.set(getattr(defaults,key))
+            for value in self.paths.values():value.set('')
             for k,v in cfg.get('paths',{}).items():
                 if k in self.paths:self.paths[k].set(v)
             for k,v in cfg.get('rules',{}).items():
                 if k in self.values:self.values[k].set(v)
+            ui=cfg.get('ui_state',{});enabled=ui.get('location_search_enabled',cfg.get('rules',{}).get('location_mode','Area search')!='Quick demo (grid centroid)')
+            self.location_search_enabled.set(enabled)
+            for key,value in ui.get('detailed_values',{}).items():
+                if key in self.values:self.values[key].set(value)
+            if self.values['location_mode'].get()=='Quick demo (grid centroid)':self.values['location_mode'].set('Area search')
+            self.update_location_search()
             for kind,mapping in cfg.get('mappings',{}).items():
                 for key,value in mapping.items():
                     if kind in self.maps and key in self.maps[kind]:self.maps[kind][key].set(value)
@@ -470,6 +487,7 @@ class App(tk.Tk):
                 raise ValueError('Load a population CSV for population planning, or select MR preview under Planning rules.')
             if rules.location_mode=='Supplied candidates' and not paths.get('candidates'):
                 raise ValueError('Select a candidate CSV for Supplied candidates mode. Templates are in data/siting_templates.')
+            self.summary.set('Preflight: '+rules.target_policy+' demand; '+rules.location_policy+' locations; '+rules.priority_policy+'. Working uploads remain temporary; persistent derived results '+('enabled' if rules.persist_project else 'disabled')+'.')
             if rules.mode=='MR preview':
                 # Inform, without forcing a repeated confirmation dialog.
                 self.summary.set('MR preview selected. Results measure MR records, not people.')

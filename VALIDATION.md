@@ -1,3 +1,11 @@
+## v7.0 validation
+
+92 standalone tests and 45 QGIS adapter/worker tests passed on Linux. New regressions cover actual grid assignment IDs and totals, polygon containment including boundary points, Red-first/Red-only policy behaviour, strict Red locations, settlement seeding, scenario migration, durable result and building indexes, GeoPackage layers/numeric fields, adaptive JSON batches, compound/water intersections, line proximity, DEM input, required RF evidence, review HTTP origin checks and immutable original plans. JavaScript syntax, shared controls and offline canvas boot/interactions are checked by the suite.
+
+A sparse synthetic area-search trial selected/exported 10,050 sites from 50,250 alternatives, staged 20,101 selected-scope rows from over one million source rows, peaked at 235.96 MiB Linux RSS and completed fixture/import/planning/exports in 42.23 seconds. See tests/v7_area_scale_check.json. This is not a dense Nigeria building/demand performance guarantee.
+
+CI configuration adds Linux/Windows unit tests, Windows native Tk resize checks and a real Chromium offline-map review smoke. Those hosted jobs are not represented as passed by the local results above. Native QGIS GUI and real Google/OSM provider interaction remain unverified. RF footprints are externally validated/user-declared evidence, not an internally calibrated propagation model.
+
 ## v6.3 map tools validation
 
 All 79 automated tests passed on Linux. Checks cover global ID lookup at site 10,050, case-insensitive indexed lookup, duplicate IDs in different layers, missing IDs, invalid layers, SQL-like search text, closed-session fallback, spherical radius at Nigeria/high latitude/dateline coordinates, measurement controls, shared search/fly callbacks, all three generated viewer scripts, and offline map initialization plus measurement click and search fly-to interactions in a mocked DOM/canvas runtime. Browser rendering and real provider interaction remain unverified: the Chromium download returned invalid archives in this environment. Provider tile/API access is still required for online viewers.

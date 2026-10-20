@@ -6,7 +6,7 @@ from shapely.geometry import shape,box,Polygon,MultiPolygon
 from gis_io import Dataset,iter_source,_reproject
 
 
-def building_chunks(path,layer=None,crs_override=None,bbox=None,cancelled=lambda:False,chunk_size=400000):
+def building_chunks(path,layer=None,crs_override=None,bbox=None,cancelled=lambda:False,chunk_size=400000,memory_mb=None):
     path=Path(path)
     # GeoJSON feature arrays can be streamed without loading a whole JSON document.
     if path.suffix.lower() in ('.json','.geojson'):
@@ -29,7 +29,7 @@ def building_chunks(path,layer=None,crs_override=None,bbox=None,cancelled=lambda
             if esri:
                 if not(crs_override or declared):raise ValueError('Esri JSON requires its spatialReference before features, or an explicit source CRS override.')
                 source_crs=crs_override or declared
-            rows=[];geometries=[];seen=0
+            rows=[];geometries=[];seen=0;estimated_bytes=0
             def chunk():
                 geoms,actual_crs=_reproject(np.array(geometries,dtype=object),source_crs)
                 frame=pd.DataFrame(rows).fillna('')
@@ -43,8 +43,8 @@ def building_chunks(path,layer=None,crs_override=None,bbox=None,cancelled=lambda
                     rows.append(props)
                     try:geom=esri_polygon(feature['geometry']) if esri else shape(feature['geometry']) if feature.get('geometry') else None
                     except (ValueError,TypeError,KeyError):geom=None
-                    geometries.append(geom)
-                    if len(rows)>=chunk_size:yield chunk();rows=[];geometries=[]
+                    geometries.append(geom);estimated_bytes+=(len(geom.wkb)*3 if geom is not None else 0)+len(str(props))*3
+                    if len(rows)>=chunk_size or (memory_mb and estimated_bytes>=memory_mb*1024*1024/4):yield chunk();rows=[];geometries=[];estimated_bytes=0
             if rows:yield chunk()
             return
     if path.suffix.lower() in ('.kml','.kmz'):
@@ -54,7 +54,7 @@ def building_chunks(path,layer=None,crs_override=None,bbox=None,cancelled=lambda
                 mask=np.array([g is not None and g.intersects(box(*bbox)) for g in data.geometries]);data.frame=data.frame.loc[mask].reset_index(drop=True);data.geometries=data.geometries[mask]
             yield data
         return
-    yield from iter_source(path,layer=layer,crs_override=crs_override,bbox=bbox,cancelled=cancelled,chunk_size=chunk_size)
+    yield from iter_source(path,layer=layer,crs_override=crs_override,bbox=bbox,cancelled=cancelled,chunk_size=chunk_size,memory_mb=memory_mb)
 
 
 def esri_polygon(geometry):

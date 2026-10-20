@@ -1,0 +1,16 @@
+[general]
+name=New Site Planning
+qgisMinimumVersion=3.34
+qgisMaximumVersion=3.99
+version=2.0.0
+author=Mr. Jaiswal
+email=
+description=Plan telecom sites using Red/Amber demand, inventory, buildings and actual QGIS polygon constraints.
+about=Native QGIS dock and styled result layers, with an isolated external Python planning worker. Supports CSV and project vector layers, open buildings, OSM, official Google Maps review and Earth exports. Private installable ZIP; live QGIS GUI validation is pending.
+category=Vector
+icon=icon.svg
+experimental=True
+deprecated=False
+hasProcessingProvider=False
+repository=
+changelog=2.0.0 - Shared v7 production worker, mandatory land/water screening, large site counts, policy controls and persistent results. Native GUI remains unverified.

@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import shape,Point
 from session_db import Session,DiskTable,number,valid,distance,encode
+from planning_policy import target_category,candidate_where,location_allowed
 
 
 def prepare_references(s,r):
@@ -46,7 +47,7 @@ def prepare_references(s,r):
                 if not math.isfinite(row['radius_m']) or row['radius_m']<=0:raise ValueError('No-build buffer radius_m must be finite and positive.')
             s.add(table,row)
     for kind in ('road','backhaul','power'):
-        if getattr(r,'max_'+kind+'_km')>0 and not s.db.execute("SELECT 1 FROM infrastructure WHERE lower(json_extract(payload,'$.kind'))=? LIMIT 1",(kind,)).fetchone():raise ValueError(f'{kind.title()} limit enabled but no valid {kind} infrastructure reference points were supplied.')
+        if getattr(r,'max_'+kind+'_km')>0 and not s.db.execute("SELECT 1 FROM infrastructure WHERE lower(json_extract(payload,'$.kind'))=? LIMIT 1",(kind,)).fetchone() and not s.db.execute("SELECT 1 FROM network WHERE json_extract(payload,'$.kind')=? LIMIT 1",(kind,)).fetchone():raise ValueError(f'{kind.title()} limit enabled but no valid {kind} infrastructure reference points were supplied.')
     s.db.commit()
 
 
@@ -79,7 +80,7 @@ def prepare_grids_and_demand(s,r,paths,notes):
             if value<0 or not math.isfinite(value):value=float('nan')
             row['population']=value if r.population_kind=='People per grid' else value*row['area_km2'];row['density_per_km2']=row['population']/row['area_km2'];row['demand']=row['population']
         else:row.update(population=None,density_per_km2=None,demand=number(row.get('mr','')))
-        nearest_fields(s,row);poor=row['category'] in ('Red','Amber');good=math.isfinite(row['demand']) and row['demand']>0;density=r.mode!='Population' or row['density_per_km2']>=r.min_density
+        nearest_fields(s,row);poor=target_category(row['category'],r);good=math.isfinite(row['demand']) and row['demand']>0;density=r.mode!='Population' or row['density_per_km2']>=r.min_density
         row['target']=int(poor and good and density);row['severity_weight']=r.red_weight if row['category']=='Red' else r.amber_weight if row['category']=='Amber' else 0.
         row['competitor_near']=int(row['nearest_competitor_km']<=r.competitor_radius_km)
         row['weighted_demand']=(row['demand'] if good else 0)*row['severity_weight']*(1+r.competitor_boost*row['competitor_near'])
@@ -99,10 +100,12 @@ def prepare_grids_and_demand(s,r,paths,notes):
     s.unique('demand_points',country=r.country.upper())
     s.db.execute('CREATE TABLE fine(gid TEXT,payload TEXT)');s.db.execute('CREATE INDEX fine_grid ON fine(gid)')
     for _,row,_ in s.input_rows('demand_points',country=r.country.upper()):
-        parent=s.db.execute('SELECT payload FROM grids WHERE gid=?',(row['grid_id'],)).fetchone()
+        parent=s.db.execute('SELECT payload,geometry FROM grids WHERE gid=?',(row['grid_id'],)).fetchone()
         if not parent:s.issue('demand_points',row,'Parent grid outside selected scope; ignored');continue
-        parent=json.loads(parent[0]);row['lat']=number(row['lat']);row['lon']=number(row['lon']);row['value']=number(row['value'])
+        parent_geometry=parent[1];parent=json.loads(parent[0]);row['lat']=number(row['lat']);row['lon']=number(row['lon']);row['value']=number(row['value'])
         if not valid(row['lat'],row['lon']) or not math.isfinite(row['value']) or row['value']<0:raise ValueError('Demand points require valid coordinates and non-negative finite values.')
+        if parent_geometry and not shape(json.loads(parent_geometry)).covers(Point(row['lon'],row['lat'])):
+            raise ValueError(f"Demand point {row['id']} is outside its parent grid polygon {row['grid_id']}. Correct the spatial join.")
         if parent['target']:s.db.execute('INSERT INTO fine VALUES(?,?)',(row['grid_id'],encode(row)))
     detailed=0;side=1 if r.grid_size=='1km' else 3
     for rid,g,_ in s.records('grids',"json_extract(payload,'$.target')=1"):
@@ -111,10 +114,9 @@ def prepare_grids_and_demand(s,r,paths,notes):
         rows=({'point_id':'GRID:'+g['id'],'grid_id':g['id'],'lat':g['lat'],'lon':g['lon'],'demand':g['demand'],'basis':'Coarse grid demand at centroid','grid_index':rid},) if not count else (dict(point_id=d['id'],grid_id=g['id'],lat=d['lat'],lon=d['lon'],demand=d['value'],basis='Supplied detailed demand point',grid_index=rid) for payload, in s.db.execute('SELECT payload FROM fine WHERE gid=?',(g['id'],)) for d in [json.loads(payload)])
         detailed+=bool(count)
         for d in rows:
-            if count and distance(d['lat'],d['lon'],g['lat'],g['lon'])>side/math.sqrt(2)+.01:raise ValueError('Demand points exceed nominal parent grid envelope.')
             if d['demand']<=0:continue
             comp=g['nearest_competitor_km'] if not count else s.nearest('competitors',d['lat'],d['lon'])[0]
-            d['weight']=d['demand']*g['severity_weight']*(1+r.competitor_boost*(comp is not None and comp<=r.competitor_radius_km));d.update(assigned_candidate='',distance_km=None)
+            d['weight']=d['demand']*g['severity_weight']*(1+r.competitor_boost*(comp is not None and comp<=r.competitor_radius_km));d.update(assigned_candidate='',distance_km=None,category=g['category'])
             s.add('demand',d)
     s.db.execute('DROP TABLE fine');s.db.commit()
     notes.append(f'{detailed:,} target grids use reconciled detailed demand; others use coarse grid-centroid demand.')
@@ -127,44 +129,89 @@ def candidate_sources(s,r):
         if not s.count('inputs',"role='candidates'"):raise ValueError('Supplied candidates mode requires a candidate source; no centroid fallback.')
         for _,row,_ in s.input_rows('candidates',country=r.country.upper()):
             row['source_candidate_id']=row.pop('id');row['location_basis']='Supplied candidate coordinate';yield row
+    elif r.location_mode=='Settlement search' and r.building_rule!='Rooftop search':
+        sequence=0;side=1000 if r.grid_size=='1km' else 3000
+        for _,g,geometry in s.records('grids',candidate_where(r),order='gid'):
+            polygon=shape(json.loads(geometry));seeds=[]
+            for payload, in s.db.execute("SELECT payload FROM demand WHERE json_extract(payload,'$.grid_id')=? AND json_extract(payload,'$.basis')='Supplied detailed demand point' ORDER BY json_extract(payload,'$.demand') DESC LIMIT 8",(g['id'],)):
+                d=json.loads(payload);seeds.append((d['lat'],d['lon'],'Detailed demand seed'))
+            if s.buildings:
+                quadrants={}
+                for feature in s.buildings.iter_features(polygon.bounds):
+                    s.check();point=shape(feature['geometry']).representative_point()
+                    if not polygon.covers(point):continue
+                    key=(point.x>=g['lon'],point.y>=g['lat']);a=quadrants.setdefault(key,[0.,0.,0]);a[0]+=point.y;a[1]+=point.x;a[2]+=1
+                seeds.extend((a[0]/a[2],a[1]/a[2],'Mapped settlement-cluster seed') for a in quadrants.values())
+            if not seeds:seeds=[(g['lat'],g['lon'],'No fine demand/building evidence: coarse centroid fallback')]
+            offset=max(50.,r.building_clearance_m+30);east=np.array([0.,offset,-offset,0.,0.]);north=np.array([0.,0.,0.,offset,-offset])
+            seen=set()
+            for lat,lon,basis in seeds:
+                ys,xs=offset_coordinates(lat,lon,east,north)
+                for y,x in zip(ys,xs):
+                    identity=(round(float(y),9),round(float(x),9))
+                    if identity in seen:continue
+                    seen.add(identity);sequence+=1
+                    yield dict(source_candidate_id=f'SETTLEMENT_{sequence:08d}',grid_id=g['id'],country=r.country.upper(),lat=float(y),lon=float(x),feasible='unknown',location_basis=basis+'; desktop alternative, physical feasibility unknown',location_source='Demand/building-guided search',survey_verified='No')
     elif r.building_rule=='Rooftop search':
         if s.buildings is None:raise ValueError('Rooftop search requires building footprints.')
         side=1 if r.grid_size=='1km' else 3
         for feature in s.buildings.iter_features():
-            point=shape(feature['geometry']).representative_point();dist,parent=s.nearest('grids',point.y,point.x)
-            if dist>side/math.sqrt(2)+.01:continue
+            point=shape(feature['geometry']).representative_point();parent=None
+            for payload,geom in s.db.execute('SELECT t.payload,t.geometry FROM grids_rt b JOIN grids t ON t.rid=b.rid WHERE b.minx<=? AND b.maxx>=? AND b.miny<=? AND b.maxy>=?',(point.x,point.x,point.y,point.y)):
+                proposed=json.loads(payload)
+                if geom and shape(json.loads(geom)).covers(point) and location_allowed(proposed,r):
+                    if r.location_policy=='Current behaviour' and not proposed['target']:continue
+                    parent=proposed;break
+            if parent is None:continue
             p=feature['properties'];yield dict(source_candidate_id='ROOF:'+str(p['building_id']),grid_id=parent['id'],country=r.country.upper(),lat=point.y,lon=point.x,feasible='unknown',location_basis='Footprint interior point; roof structurally unverified',location_source=p.get('source','Open footprint input'),survey_verified='No')
     else:
         side=1000 if r.grid_size=='1km' else 3000;offsets=np.array([[0.,0.]])
         if r.location_mode=='Area search':
             n=max(1,int(math.ceil(side/r.search_spacing_m)));axis=-side/2+(np.arange(n)+.5)*side/n;offsets=np.unique(np.array([(x,y) for x in axis for y in axis]+[(0.,0.)]),axis=0)
         index=0
-        for _,g,_ in s.records('grids',"json_extract(payload,'$.target')=1",order='gid'):
+        for _,g,_ in s.records('grids',candidate_where(r),order='gid'):
             lat,lon=offset_coordinates(g['lat'],g['lon'],offsets[:,0],offsets[:,1])
             for y,x in zip(lat,lon):
                 index+=1;yield dict(source_candidate_id=f'SEARCH_{index:08d}',grid_id=g['id'],country=r.country.upper(),lat=float(y),lon=float(x),feasible='unknown',location_basis='Nominal-grid area search' if r.location_mode=='Area search' else 'Quick demo grid centroid; approximate location' if r.location_mode=='Quick demo (grid centroid)' else 'Legacy grid centroid',location_source='Generated desktop search',survey_verified='No')
 
 
+class RejectionRow(dict):
+    def __setitem__(self,key,value):
+        if key=='rejection' and value:
+            reasons=self.setdefault('rejection_reasons',[])
+            if value not in reasons:reasons.append(value)
+        super().__setitem__(key,value)
+
 def prepare_candidates(s,r,notes):
     side=1000 if r.grid_size=='1km' else 3000
+    if r.location_mode in ('Area search','Grid centroid (legacy)') and r.building_rule!='Rooftop search':
+        grids=s.count('grids',candidate_where(r));n=max(1,int(math.ceil(side/r.search_spacing_m))) if r.location_mode=='Area search' else 1;expected=grids*(n*n+int(n%2==0))
+        s.log(f'Preflight: {grids:,} location grids; {expected:,} generated alternatives; configured limit {r.max_candidate_points:,}.')
+        if expected>r.max_candidate_points:raise ValueError(f'Candidate alternatives exceed configured limit: expected {expected:,}; configured {r.max_candidate_points:,}. Increase the limit or search spacing before rerunning.')
     max_buffer=s.db.execute("SELECT MAX(json_extract(payload,'$.radius_m')) FROM buffers").fetchone()[0] or 0
     def flush(batch):
         if s.buildings is not None:
-            frame=pd.DataFrame(batch);s.buildings.annotate(frame,r);batch=frame.to_dict('records')
+            from dataclasses import replace
+            frame=pd.DataFrame(batch);effective=replace(r,building_clearance_m=max(r.building_clearance_m,r.site_compound_radius_m));s.buildings.annotate(frame,effective);batch=frame.to_dict('records')
         for row in batch:
             # Always retain the water rejection, including when building screening also rejects.
             water_reason=row.pop('_water_rejection','')
-            if water_reason:row['rejection']=water_reason
+            reasons=row.setdefault('rejection_reasons',[])
+            if row.get('rejection') and row['rejection'] not in reasons:reasons.append(row['rejection'])
+            if water_reason:
+                if water_reason not in reasons:reasons.insert(0,water_reason)
+            row['rejection']=water_reason or (reasons[0] if reasons else '')
             rid=s.add('candidates',row);s.db.execute('UPDATE candidates SET allowed=? WHERE rid=?',(int(not row['rejection']),rid))
         s.db.commit()
     batch=[];processed=0
     for row in candidate_sources(s,r):
         s.check();processed+=1
         if r.location_mode!='Quick demo (grid centroid)' and processed>r.max_candidate_points:raise ValueError('Candidate alternatives exceed configured limit; increase the limit or use a wider search spacing.')
+        row=RejectionRow(row)
         row['lat']=number(row['lat']);row['lon']=number(row['lon'])
         if not valid(row['lat'],row['lon']):s.issue('candidates',row,'Invalid candidate coordinates; excluded');continue
         accuracy_supplied=str(row.get('accuracy_m','')).strip()
-        row['rejection']='';row['suitability']=number(row.get('suitability') or '1');row['survey_verified']=row.get('survey_verified','Unknown');row['location_source']=row.get('location_source','Not supplied');row['accuracy_m']=number(row.get('accuracy_m',''))
+        row['rejection']='';row['rejection_reasons']=[];row['suitability']=number(row.get('suitability') or '1');row['survey_verified']=row.get('survey_verified','Unknown');row['location_source']=row.get('location_source','Not supplied');row['accuracy_m']=number(row.get('accuracy_m',''))
         if r.location_mode=='Supplied candidates' and str(row.get('feasible','')).lower() not in ('yes','true','1'):row['rejection']='Candidate feasibility not explicitly confirmed'
         if not 0<=row['suitability']<=1:row['rejection']='Suitability must be between 0 and 1'
         accuracy=row.get('accuracy_m')
@@ -175,6 +222,7 @@ def prepare_candidates(s,r,notes):
             row['rejection']='Parent grid outside selected country/resolution/snapshot';row.update(parent_grid_index=None,parent_town='',parent_category='',offset_from_grid_centroid_m=None)
         else:
             pid,g,geometry=parent;g=json.loads(g);row.update(parent_grid_index=pid,parent_town=g['town'],parent_category=g['category'],parent_lat=g['lat'],parent_lon=g['lon'],parent_site_present=g['site_present'])
+            if not location_allowed(g,r):row['rejection']='Parent grid is disallowed by location policy'
             row['offset_from_grid_centroid_m']=distance(row['lat'],row['lon'],g['lat'],g['lon'])*1000
             if geometry:
                 if not shape(json.loads(geometry)).covers(Point(row['lon'],row['lat'])):row['rejection']='Outside actual parent grid polygon'
@@ -194,6 +242,13 @@ def prepare_candidates(s,r,notes):
         for kind in ('road','backhaul','power'):
             d,_=s.nearest('infrastructure',row['lat'],row['lon'],"lower(json_extract(t.payload,'$.kind'))=?",(kind,));row['nearest_'+kind+'_km']=d
             if getattr(r,'max_'+kind+'_km')>0 and d>getattr(r,'max_'+kind+'_km'):row['rejection']=f'Beyond {kind} reference-point distance limit'
+        if getattr(s,'engineering',None):
+            for message in s.engineering.screen(row):row['rejection']=message
+        for kind in ('road','backhaul','power'):
+            value=row.get('nearest_'+kind+'_km');limit=getattr(r,'max_'+kind+'_km')
+            if limit and value is not None and math.isfinite(value) and value<=limit:
+                row['rejection_reasons']=[x for x in row['rejection_reasons'] if x!=f'Beyond {kind} reference-point distance limit']
+        row['rejection']=row['rejection_reasons'][0] if row['rejection_reasons'] else ''
         row.update(mapped_buildings_within_radius=None,mapped_footprint_area_m2=None,nearest_mapped_building_m=None,containing_building_id='',containing_building_area_m2=None,building_factor=1.,building_context='No building dataset supplied',selected_candidate='',initial_demand=0.,initial_weighted_benefit=0.)
         batch.append(row)
         if len(batch)>=min(s.batch_size,256):flush(batch);batch=[]
@@ -202,32 +257,49 @@ def prepare_candidates(s,r,notes):
     notes.append('Candidates, demand, assignments and the lazy-greedy priority queue are stored in a temporary SQLite database. No global candidate-demand link list is held in memory.')
 
 
-def score_candidate(s,row,r,unassigned=True):
-    total=0.;benefit=0.;quality=row['suitability']*row['building_factor'];count=0
+def score_candidate(s,row,r,unassigned=True,record=False):
+    before_decay=competitor_gain=0.
+    total=benefit=red_benefit=red=amber=0.;quality=row['suitability']*row['building_factor'];count=0
     for _,d,dist,_ in s.spatial('demand',row['lat'],row['lon'],r.service_radius_km,"t.assigned=''" if unassigned else '1'):
-        total+=d['demand'];benefit+=d['weight']*math.exp(-r.distance_decay*(dist/r.service_radius_km)**2)*quality;count+=1
-    return total,benefit,count
+        evidence=getattr(s,'engineering',None)
+        if evidence and not evidence.rf_allows(row,d):continue
+        value=d['weight']*math.exp(-r.distance_decay*(dist/r.service_radius_km)**2)*quality
+        base=d['demand']*(r.red_weight if d.get('category')=='Red' else r.amber_weight);decay=math.exp(-r.distance_decay*(dist/r.service_radius_km)**2)
+        before_decay+=d['weight']*quality;competitor_gain+=(d['weight']-base)*decay*quality
+        total+=d['demand'];benefit+=value;count+=1
+        if d.get('category')=='Red':red+=d['demand'];red_benefit+=value
+        else:amber+=d['demand']
+    if record:row['_score_breakdown']={'red_benefit':red_benefit,'amber_benefit':benefit-red_benefit,'competitor_uplift_after_decay':competitor_gain,'benefit_before_distance_decay':before_decay,'distance_decay_reduction':before_decay-benefit,'suitability_factor':row['suitability'],'building_factor':row['building_factor'],'final_weighted_benefit':benefit}
+    return total,benefit,count,red_benefit,red,amber
 
 
 def select_sites(s,r):
     from planner import SITE_COLUMNS
     eligible=s.count('candidates','allowed=1');s.log(f'{s.count("demand"):,} demand points; {s.count("candidates"):,} alternatives; {eligible:,} pass screening.')
     for index,(rid,row,_) in enumerate(s.records('candidates','allowed=1')):
-        total,benefit,_=score_candidate(s,row,r);row.update(initial_demand=total,initial_weighted_benefit=benefit);s.update('candidates',rid,row);s.db.execute('UPDATE candidates SET score=? WHERE rid=?',(benefit,rid))
+        total,benefit,_,red_score,_,_=score_candidate(s,row,r);row.update(initial_demand=total,initial_weighted_benefit=benefit);s.update('candidates',rid,row);s.db.execute('UPDATE candidates SET score=?,red_score=? WHERE rid=?',(benefit,red_score,rid))
         if index%2000==1999:s.db.commit();s.log(f'Initial scores: {index+1:,}/{eligible:,}')
     rank=0;s.db.execute('CREATE TEMP TABLE local_assigned(gr TEXT,dem REAL,dist REAL)')
     while rank<r.max_sites:
-        s.check();entry=s.db.execute('SELECT rid,payload,score,stamp FROM candidates WHERE allowed=1 ORDER BY score DESC,rid LIMIT 1').fetchone()
+        s.check();order='red_score DESC,score DESC,rid' if r.priority_policy=='Red demand first' else 'score DESC,rid'
+        entry=s.db.execute('SELECT rid,payload,score,stamp FROM candidates WHERE allowed=1 ORDER BY '+order+' LIMIT 1').fetchone()
         if not entry:break
         rid,payload,old_score,stamp=entry;row=json.loads(payload)
         if old_score<=0:break
-        total,value,point_count=score_candidate(s,row,r)
+        total,value,point_count,red_score,red,amber=score_candidate(s,row,r,record=True)
         if point_count==0 or total<r.min_incremental or value<=0:s.db.execute('UPDATE candidates SET allowed=0 WHERE rid=?',(rid,));continue
-        if stamp!=rank:s.db.execute('UPDATE candidates SET score=?,stamp=? WHERE rid=?',(value,rank,rid));continue
+        if stamp!=rank:s.db.execute('UPDATE candidates SET score=?,red_score=?,stamp=? WHERE rid=?',(value,red_score,rank,rid));continue
+        alternatives=[]
+        for other_id,payload in s.db.execute("SELECT rid,payload FROM candidates WHERE allowed=1 AND gid<>? AND json_extract(payload,'$.grid_id')=? ORDER BY score DESC LIMIT 50",(row['source_candidate_id'],row['grid_id'])):
+            other=json.loads(payload);opportunity,score,_,rb,rd,ad=score_candidate(s,other,r)
+            alternatives.append({'source_candidate_id':other['source_candidate_id'],'grid_id':other['grid_id'],'lat':other['lat'],'lon':other['lon'],'weighted_benefit':score,'incremental_demand':opportunity,'red_demand':rd,'amber_demand':ad,'red_weighted_benefit':rb})
+        alternatives.sort(key=lambda a:((a['red_weighted_benefit'] if r.priority_policy=='Red demand first' else 0),a['weighted_benefit']),reverse=True)
         rank+=1;cid=f'{r.country}_{r.grid_size}_NEW_{rank:04d}'
+        for alternative in alternatives[:3]:s.db.execute('INSERT INTO alternatives VALUES(?)',(encode({'selected_candidate':cid,'comparison_basis':'At selection time; up to 50 screened alternatives from same parent grid',**alternative}),))
         # Updates stream one point at a time; no huge neighborhood list.
         s.db.execute('DELETE FROM local_assigned');coarse=False
         for did,d,dist,_ in s.spatial('demand',row['lat'],row['lon'],r.service_radius_km,"t.assigned=''"):
+            if getattr(s,'engineering',None) and not s.engineering.rf_allows(row,d):continue
             coarse|=d['basis']=='Coarse grid demand at centroid';d.update(assigned_candidate=cid,distance_km=dist);s.update('demand',did,d)
             s.db.execute('UPDATE demand SET assigned=?,distance=? WHERE rid=?',(cid,dist,did));s.db.execute('INSERT INTO local_assigned VALUES(?,?,?)',(d['grid_id'],d['demand'],dist))
         grid_count=s.db.execute('SELECT COUNT(DISTINCT gr) FROM local_assigned').fetchone()[0]
@@ -235,7 +307,7 @@ def select_sites(s,r):
             s.db.execute('INSERT INTO selected_stats VALUES(?,?,?,?,?) ON CONFLICT(gid) DO UPDATE SET total=total+excluded.total,weighted_distance=weighted_distance+excluded.weighted_distance,count_sites=count_sites+1,ids=ids||\';\'||excluded.ids',(gid,dem,weighted,1,cid))
 
         result={key:row.get(key) for key in SITE_COLUMNS};result.update(rank=rank,candidate_id=cid,country=r.country,category=row['parent_category'],town=row['parent_town'],incremental_demand=total,weighted_benefit=value,assigned_grids=grid_count,assigned_points=point_count,
-            location_status='Input feasible candidate; RF and acquisition review required' if r.location_mode=='Supplied candidates' else 'Quick demo only; approximate grid centroid, detailed planning required' if r.location_mode=='Quick demo (grid centroid)' else 'Desktop search point; physical feasibility unknown',demand_basis='Mixed/coarse grid demand' if coarse else 'Supplied detailed demand points',demand_unit='people (radius opportunity, not predicted coverage)' if r.mode=='Population' else 'MR records (NOT population)',reason=f"{row['parent_category']} area; {point_count} incremental demand points")
+            score_breakdown=row['_score_breakdown'],review_status='Automatically proposed',red_demand=red,amber_demand=amber,red_weighted_benefit=red_score,policy=r.priority_policy+'; '+r.location_policy,selection_explanation=f'Rank {rank}: {red:g} Red and {amber:g} Amber incremental demand; weighted benefit {value:g}. Objective: {r.priority_policy}. Suitability {row["suitability"]:g}; building factor {row["building_factor"]:g}; distance decay {r.distance_decay:g}. Alternative comparison is local and bounded; RF remains unverified unless imported evidence applies.',location_status='Input feasible candidate; RF and acquisition review required' if r.location_mode=='Supplied candidates' else 'Quick demo only; approximate grid centroid, detailed planning required' if r.location_mode=='Quick demo (grid centroid)' else 'Desktop search point; physical feasibility unknown',demand_basis='Mixed/coarse grid demand' if coarse else 'Supplied detailed demand points',demand_unit='people (radius opportunity, not predicted coverage)' if r.mode=='Population' else 'MR records (NOT population)',reason=f"{row['parent_category']} area; {point_count} incremental demand points")
         s.add('sites',result);row['selected_candidate']=cid;s.update('candidates',rid,row)
         for other,_,dist,_ in s.spatial('candidates',row['lat'],row['lon'],r.min_new_km,'t.allowed=1'):
             if other==rid or dist<r.min_new_km or math.isclose(dist,r.min_new_km,abs_tol=1e-12):s.db.execute('UPDATE candidates SET allowed=0 WHERE rid=?',(other,))
@@ -257,13 +329,15 @@ def run_database(paths,rules,mappings=None,log=print,cancelled=lambda:False,sour
     try:
         s.ingest(paths,rules,mappings,source_options)
         if not s.count('land') or not s.count('water'):raise ValueError('Land and water polygon layers must be nonempty. Water screening cannot be skipped.')
+        from engineering import Engineering
+        s.engineering=Engineering(s,rules,paths.get('terrain'))
         prepare_references(s,rules);notes=[]
         if rules.location_mode=='Quick demo (grid centroid)':
             message='QUICK DEMO: location search OFF; one centroid per target grid. Approximate positions only; land/water and loaded feasibility checks remain active. Search alternative limit does not apply.'
             notes.append(message);log(message)
         prepare_grids_and_demand(s,rules,paths,notes)
         if s.buildings is not None:
-            w,south,e,n=s.buildings.bounds;bounds=s.db.execute('SELECT min(lon),min(lat),max(lon),max(lat) FROM grids').fetchone()
+            w,south,e,n=s.buildings.bounds;bounds=s.db.execute('SELECT min(minx),min(miny),max(maxx),max(maxy) FROM grids_rt').fetchone()
             if e<bounds[0] or w>bounds[2] or n<bounds[1] or south>bounds[3]:raise ValueError('Building extent does not overlap the selected grid scope.')
             for issue in s.buildings.issues:s.issue('buildings',issue,issue.get('reason','Invalid footprint'))
         if rules.building_rule=='Rooftop search' and s.buildings is None:raise ValueError('Rooftop search requires building footprints.')

@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
 
-MODES=('Area search','Supplied candidates','Grid centroid (legacy)','Quick demo (grid centroid)')
+MODES=('Settlement search','Area search','Supplied candidates','Grid centroid (legacy)','Quick demo (grid centroid)')
 
 def offset_coordinates(lat,lon,east_m,north_m):
     """Spherical direct solution; offsets have local bearing atan2(east,north)."""
@@ -20,6 +20,7 @@ def offset_coordinates(lat,lon,east_m,north_m):
 def select_locations(g,target,source,blockers,competitors,rules,reject,notes,log,cancelled,buildings=None,constraints=None):
     from planner import numeric,valid_coords,validate_ids,xyz,chord,km_from_chord,nearest,SITE_COLUMNS
     if rules.building_rule=='Rooftop search' and buildings is None:raise ValueError('Rooftop search requires building footprints.')
+    if rules.location_mode=='Settlement search' or rules.target_policy!='Red + Amber' or rules.location_policy!='Current behaviour' or rules.priority_policy!='Weighted demand':raise ValueError('Use the production run_paths engine for v7 planning policies and settlement search.')
     if rules.location_mode not in MODES:raise ValueError('Unknown location mode.')
     if rules.location_mode=='Quick demo (grid centroid)':notes.append('QUICK DEMO: one centroid per target grid; no location search. Approximate coordinates require detailed planning and survey. Search alternative limit does not apply.')
     eligible=g.loc[target].copy()

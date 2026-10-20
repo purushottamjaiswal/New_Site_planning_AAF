@@ -80,18 +80,61 @@ class LocalMapServer:
         folder=Path(folder).resolve();index=None;planning_db=None
         try:
             settings=json.loads((folder/'run_settings.json').read_text())
-            planning_db=settings.get('temporary_database') or settings.get('summary',{}).get('database_path')
+            planning_db=settings.get('result_database') or settings.get('temporary_database') or settings.get('summary',{}).get('database_path')
             if planning_db and not Path(planning_db).is_file():planning_db=None
             candidate=settings.get('source_layers_and_crs',{}).get('buildings',{}).get('index_path')
             if candidate and Path(candidate).is_file():
                 from building_index import DiskBuildingContext
                 index=DiskBuildingContext(candidate)
         except (ValueError,OSError):pass
+        review_lock=threading.Lock()
         class Handler(SimpleHTTPRequestHandler):
             def log_message(self,*args):pass
+            def do_POST(self):
+                from urllib.parse import urlparse
+                from contextlib import closing
+                if urlparse(self.path).path not in ('/api/review/preview','/api/review/save'):self.send_error(404);return
+                if self.headers.get('Origin') and self.headers['Origin']!='http://'+self.headers.get('Host',''):self.send_error(403);return
+                try:
+                    if not planning_db:raise ValueError('Re-export with persistent result project enabled.')
+                    length=int(self.headers.get('Content-Length','0'))
+                    if not 0<length<=16384 or self.headers.get_content_type()!='application/json':raise ValueError('Expected a small JSON review request.')
+                    from project_review import ProjectSession,evaluate,save_review
+                    request=json.loads(self.rfile.read(length))
+                    with review_lock:
+                        with closing(ProjectSession(planning_db)) as project:report=(save_review if self.path.endswith('/save') else evaluate)(project,request)
+                    payload=json.dumps(report,allow_nan=False).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(payload)));self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(payload)
+                except (ValueError,KeyError,TypeError,OSError) as exc:
+                    payload=json.dumps({'error':str(exc)}).encode();self.send_response(400);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(payload)));self.end_headers();self.wfile.write(payload)
+                except Exception as exc:self.send_error(503,'Project review is unavailable; re-export with the updated application.')
+
             def do_GET(self):
                 from urllib.parse import urlparse,parse_qs
                 request=urlparse(self.path)
+                if request.path=='/api/alternatives':
+                    try:
+                        import sqlite3
+                        from contextlib import closing
+                        key=parse_qs(request.query).get('site_id',[''])[0]
+                        if not planning_db or not key:raise ValueError()
+                        with closing(sqlite3.connect(Path(planning_db).resolve().as_uri()+'?mode=ro',uri=True)) as db:rows=db.execute("SELECT payload FROM alternatives WHERE json_extract(payload,'$.selected_candidate')=? LIMIT 3",(key,)).fetchall()
+                        features=[]
+                        for text, in rows:
+                            p=json.loads(text);features.append({'type':'Feature','properties':{**p,'layer':'alternatives'},'geometry':{'type':'Point','coordinates':[p['lon'],p['lat']]}})
+                        payload=json.dumps({'type':'FeatureCollection','features':features}).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(payload)));self.end_headers();self.wfile.write(payload)
+                    except Exception:self.send_error(503,'Alternative comparison unavailable.')
+                    return
+                if request.path=='/api/reviews':
+                    try:
+                        import sqlite3
+                        from contextlib import closing
+                        query=parse_qs(request.query);key=query.get('site_id',[''])[0]
+                        if not planning_db:raise ValueError()
+                        with closing(sqlite3.connect(Path(planning_db).resolve().as_uri()+'?mode=ro',uri=True)) as db:
+                            rows=db.execute('SELECT revision,record FROM reviews '+('WHERE site_id=? ' if key else '')+'ORDER BY revision DESC LIMIT 100',(key,) if key else ()).fetchall()
+                        payload=json.dumps([{'revision':revision,**json.loads(record)} for revision,record in rows]).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(payload)));self.end_headers();self.wfile.write(payload)
+                    except Exception:self.send_error(503,'Persistent project review history unavailable.')
+                    return
                 if request.path=='/api/search':
                     import sqlite3
                     from contextlib import closing
@@ -156,10 +199,11 @@ class LocalMapServer:
                     return
                 try:super().do_GET()
                 except (BrokenPipeError,ConnectionResetError):pass
-        self.server=ThreadingHTTPServer(('127.0.0.1',8765),partial(Handler,directory=str(Path(folder).resolve())))
+        try:self.server=ThreadingHTTPServer(('127.0.0.1',8765),partial(Handler,directory=str(Path(folder).resolve())))
+        except OSError:self.server=ThreadingHTTPServer(('127.0.0.1',0),partial(Handler,directory=str(Path(folder).resolve())))
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
     @property
-    def url(self):return 'http://127.0.0.1:8765/planning_openlayers_map.html'
+    def url(self):return f'http://127.0.0.1:{self.server.server_port}/planning_openlayers_map.html'
     def close(self):self.server.shutdown();self.server.server_close()
 
 
@@ -177,7 +221,7 @@ __MAP_TOOLS_HTML__<p id="planningPreview" class="small"></p><section><strong>Pla
 const D=__DATA__;
 const $=id=>document.getElementById(id);const keys=['sites','airtel','competitors','grids','buildings','no_build'];let osm=null,gm=null,googleLoaded=false,leafletLayers={},googleLayers={},selected=null;
 function color(p){if(p.layer==='no_build')return '#cf2939';if(p.layer==='sites')return '#772bc4';if(p.layer==='airtel')return p.planning_role==='Reserved pipeline'?'#dd6400':'#1465af';if(p.layer==='competitors')return '#505b68';return ({Red:'#dd3446',Amber:'#df9e12',Green:'#269b68',Grey:'#939ca8'})[p.category]||'#455974'}
-function selectFeature(f){selected=f;let p=f.properties;const text=Object.entries(p).map(([k,v])=>k+': '+(v===null?'Unknown':v)).join('\n');$('info').textContent=text;let xy=f.geometry.type==='Point'?f.geometry.coordinates:null;if(xy){$('googleLink').href='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(xy[1]+','+xy[0]);$('googleLink').textContent='Open selected location in Google Maps'}}
+function selectFeature(f){selected=f;if(typeof tools!=='undefined')tools.select(f);let p=f.properties;const text=Object.entries(p).map(([k,v])=>k+': '+(v===null?'Unknown':v)).join('\n');$('info').textContent=text;let xy=f.geometry.type==='Point'?f.geometry.coordinates:null;if(xy){$('googleLink').href='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(xy[1]+','+xy[0]);$('googleLink').textContent='Open selected location in Google Maps'}}
 function locate(f){tools.choose(f)}
 function flyFeature(f){selectFeature(f);const xy=MapTools.center(f);if(!xy)return;let[lon,lat]=xy;if(osm)osm.flyTo([lat,lon],f.properties.layer==='grids'?15:17,{duration:.65});if(gm){gm.panTo({lat,lng:lon});gm.setZoom(f.properties.layer==='grids'?15:17)}}
 function osmInit(){if(!window.L){$('status').textContent='Leaflet could not load. Check internet/proxy, use Google Maps or open the offline map.';return}
@@ -202,6 +246,8 @@ let leafletTools=null,googleTools=[];
 function redrawTools(state){if(osm){if(leafletTools)osm.removeLayer(leafletTools);leafletTools=L.layerGroup().addTo(osm)}for(const item of googleTools)item.setMap(null);googleTools=[];
  const points=state.points.map(p=>[p[1],p[0]]);if(osm&&points.length>1)L.polyline(points,{color:'#e44817',weight:3,interactive:false}).addTo(leafletTools);if(gm&&points.length>1)googleTools.push(new google.maps.Polyline({map:gm,path:state.points.map(p=>({lat:p[1],lng:p[0]})),geodesic:true,strokeColor:'#e44817',strokeWeight:3,clickable:false}));
  for(const p of state.points){if(osm)L.circleMarker([p[1],p[0]],{radius:4,color:'#e44817',interactive:false}).addTo(leafletTools)}
+ for(const f of state.alternatives||[]){const p=MapTools.center(f);if(osm)L.circleMarker([p[1],p[0]],{radius:7,color:'#d59b00',weight:2,interactive:false}).addTo(leafletTools);if(gm)googleTools.push(new google.maps.Circle({map:gm,center:{lat:p[1],lng:p[0]},radius:20,strokeColor:'#d59b00',fillOpacity:.4,clickable:false}))}
+ if(state.draft){const p=state.draft;if(osm)L.circleMarker([p[1],p[0]],{radius:9,color:'#e44817',weight:3,interactive:false}).addTo(leafletTools);if(gm)googleTools.push(new google.maps.Circle({map:gm,center:{lat:p[1],lng:p[0]},radius:30,strokeColor:'#e44817',fillOpacity:.3,clickable:false}))}
  const selected=state.selected,xy=selected&&MapTools.center(selected);if(xy){if(osm)L.circleMarker([xy[1],xy[0]],{radius:12,color:'#e44817',weight:3,fill:false,interactive:false}).addTo(leafletTools);if(gm)googleTools.push(new google.maps.Circle({map:gm,center:{lat:xy[1],lng:xy[0]},radius:30,strokeColor:'#e44817',fillOpacity:0,clickable:false}))}
  if(state.radius&&$('sites').checked){const sites=[...D.layers.sites.features];if(selected&&selected.properties.layer==='sites'&&!sites.some(f=>f.properties.candidate_id===selected.properties.candidate_id))sites.push(selected);for(const f of sites){const xy=MapTools.center(f);if(!xy)continue;const ring=MapTools.ring(xy,D.rules.service_radius_km*1000);if(osm)L.polygon(ring.map(p=>[p[1],p[0]]),{color:'#6551b8',weight:1,dashArray:'6 4',fillOpacity:.06,interactive:false}).addTo(leafletTools);if(gm)googleTools.push(new google.maps.Polygon({map:gm,paths:ring.map(p=>({lat:p[1],lng:p[0]})),geodesic:true,strokeColor:'#6551b8',strokeOpacity:.6,strokeWeight:1,fillColor:'#6551b8',fillOpacity:.06,clickable:false}))}}
 }

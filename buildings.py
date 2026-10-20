@@ -196,7 +196,7 @@ def _read_buildings(path,rules,cancelled=lambda:False,layer=None,crs_override=No
         offset=0
         metadata['import_batch_rows']=rules.building_import_batch_size
         log(f'Building read batch: {rules.building_import_batch_size:,} rows (other input batches are separate).')
-        for data in building_chunks(path,layer=layer,crs_override=crs_override,bbox=clip,cancelled=cancelled,chunk_size=rules.building_import_batch_size):
+        for data in building_chunks(path,layer=layer,crs_override=crs_override,bbox=clip,cancelled=cancelled,chunk_size=rules.building_import_batch_size,memory_mb=rules.import_memory_mb if rules.adaptive_import else None):
             metadata.update({k:v for k,v in data.metadata.items() if k not in ('source',)})
             metadata.setdefault('source','User-supplied open building dataset')
             if data.geometries is None and 'geometry' not in data.frame:

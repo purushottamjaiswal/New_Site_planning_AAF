@@ -28,7 +28,8 @@ class DatabaseTests(unittest.TestCase):
                     folder=save_plan(result,root/'out');sites=pd.read_csv(folder/'proposed_sites.csv')
                     self.assertEqual(len(sites),len(result.sites));self.assertTrue((folder/'planning_openlayers_map.html').exists())
                     dbpath=result.session.path;self.assertTrue(dbpath.exists())
-                    self.assertEqual(result.session.count('inputs'),sum(len(f) for f in raw.values()))
+                    self.assertEqual(result.session.count('inputs'),13)
+                    self.assertEqual(result.session.count('inputs',"country<>'NG'"),0)
                 finally:result.close()
                 self.assertFalse(dbpath.exists())
     def test_supplied_green_parent_and_reconciled_fine_demand(self):
