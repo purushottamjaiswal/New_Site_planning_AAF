@@ -76,7 +76,12 @@ class DatabaseResult:
         if project_path and self.buildings_context:
             self.input_metadata={**self.input_metadata,'buildings':{**self.input_metadata.get('buildings',{}),'index_path':'building_index.sqlite'}}
         import importlib.metadata,platform,sys
-        versions={name:importlib.metadata.version(name) for name in ('numpy','pandas','scipy','shapely','pyproj','pyogrio','ijson','rasterio')}
+        versions={}
+        for name in ('numpy','pandas','scipy','shapely','pyproj','pyogrio','ijson','rasterio'):
+            try:versions[name]=importlib.metadata.version(name)
+            except importlib.metadata.PackageNotFoundError:
+                versions[name]=None
+                s.log(f'Package metadata unavailable for {name}; recording an unknown version and continuing export.')
         metadata={'software_versions':{'python':sys.version,'platform':platform.platform(),**versions},'engine_version':'7.0','result_database':project_path.name if project_path else None,'rules':asdict(self.rules),'summary':self.summary,'sources':{key:source_fingerprint(path) for key,path in (paths or {}).items() if path},'source_layers_and_crs':self.input_metadata,'temporary_database':str(s.path),'temporary_database_lifecycle':'Removed when this result/session is closed. Full output tables are already exported. Map viewport endpoints require the active session.'}
         (folder/'run_settings.json').write_text(json.dumps(clean(metadata),indent=2,allow_nan=False),encoding='utf-8')
         # Only bounded frames reach the legacy HTML renderers.

@@ -20,6 +20,25 @@ class ReleaseTests(unittest.TestCase):
         return {**paths,**masks(root)}
     def polygon_file(self,root,name,features):
         p=root/(name+'.geojson');p.write_text(json.dumps({'type':'FeatureCollection','features':features}),encoding='utf-8');return str(p)
+    def test_export_succeeds_without_optional_rasterio_metadata(self):
+        import importlib.metadata
+        real_version=importlib.metadata.version
+        def version(name):
+            if name=='rasterio':raise importlib.metadata.PackageNotFoundError(name)
+            return real_version(name)
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);messages=[]
+            result=run_paths(self.files(root),Rules(location_mode='Quick demo (grid centroid)'),log=messages.append)
+            try:
+                with patch('importlib.metadata.version',side_effect=version):folder=save_plan(result,root/'out')
+                settings=json.loads((folder/'run_settings.json').read_text(encoding='utf-8'))
+                self.assertIsNone(settings['software_versions']['rasterio'])
+                self.assertTrue((folder/'EXPORT_COMPLETE.txt').is_file())
+                self.assertTrue((folder/'planning_map.html').is_file())
+                self.assertEqual(len(pd.read_csv(folder/'proposed_sites.csv')),result.summary['proposed_sites'])
+                self.assertTrue(any('metadata unavailable for rasterio' in m for m in messages))
+            finally:result.close()
+
     def test_assignment_export_aggregates_real_parent_grid_ids(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);raw=fixtures();raw['demand_points']=pd.DataFrame({'opco':['NG','NG'],'point_id':['p1','p2'],'grid_id':['e','e'],'latitude':[0,0],'longitude':[.068,.071],'demand':[100,200]})
