@@ -14,10 +14,8 @@ class Engineering:
         if rules.rf_required and not session.count('rf_coverage'):raise ValueError('Validated RF coverage footprints are required.')
         if rules.rf_required and rules.location_mode!='Supplied candidates':raise ValueError('Required RF evidence needs Supplied candidates with stable IDs.')
         if terrain:
-            try:import rasterio
-            except ImportError as exc:raise ValueError('DEM support requires rasterio; reinstall requirements.txt.') from exc
-            self.dem=rasterio.open(terrain)
-            if not self.dem.crs:self.dem.close();raise ValueError('DEM must declare its actual horizontal CRS.')
+            from dem_io import open_dem
+            self.dem=open_dem(terrain)
             self.to_dem=Transformer.from_crs(4326,self.dem.crs,always_xy=True)
             self.from_dem=Transformer.from_crs(self.dem.crs,4326,always_xy=True)
         if rules.terrain_required and not self.dem:raise ValueError('Terrain screening is required: supply a DEM raster.')
@@ -29,7 +27,8 @@ class Engineering:
         import numpy as np
         x,y=self.to_dem.transform(lon,lat);row,col=self.dem.index(x,y)
         if not 1<=row<self.dem.height-1 or not 1<=col<self.dem.width-1:return None,None
-        data=self.dem.read(1,window=Window(col-1,row-1,3,3),masked=True)
+        data=self.dem.read(1,window=Window(col-1,row-1,3,3),masked=True).astype('float64')
+        data=data*self.dem.scales[0]+self.dem.offsets[0]
         if data.shape!=(3,3) or np.ma.getmaskarray(data).any() or not np.isfinite(data).all():return None,None
         coords=[self.from_dem.transform(*self.dem.xy(row,col-1)),self.from_dem.transform(*self.dem.xy(row,col+1)),self.from_dem.transform(*self.dem.xy(row-1,col)),self.from_dem.transform(*self.dem.xy(row+1,col))]
         geod=Geod(ellps='WGS84');dx=geod.inv(*coords[0],*coords[1])[2];dy=geod.inv(*coords[2],*coords[3])[2]

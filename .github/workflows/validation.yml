@@ -31,3 +31,17 @@ jobs:
       - run: python -m pip install -r requirements.txt playwright
       - run: python -m playwright install --with-deps chromium
       - run: python tests/browser_map_smoke.py
+  desktop_environment:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install complete desktop environment including rasterio
+        run: python setup_desktop_environment.py
+      - name: Validate Elevation Model inputs in the desktop environment
+        run: .venv/Scripts/python.exe -m unittest discover -s tests -p "test_desktop_dem.py" -v
+      - name: Check desktop resizing and result paging
+        timeout-minutes: 2
+        run: .venv/Scripts/python.exe tests/ui_resize_smoke.py

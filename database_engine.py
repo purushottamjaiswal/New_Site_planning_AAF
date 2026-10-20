@@ -325,7 +325,14 @@ def run_database(paths,rules,mappings=None,log=print,cancelled=lambda:False,sour
     if not all(paths.get(role) for role in ('grid','airtel','competitor')):raise ValueError('Load grid, Airtel and competitor source files.')
     missing=[role for role in ('land_polygons','water_polygons') if not paths.get(role)]
     if missing:raise ValueError('Water protection requires Land polygons and Water polygons covering the planning area. Select coastal land boundaries plus rivers/lakes/lagoons in Data sources. Missing: '+', '.join(missing))
+    terrain_metadata=None
+    if paths.get('terrain'):
+        from dem_io import inspect_dem
+        terrain_metadata=inspect_dem(paths['terrain'])
+        log(f'Elevation Model accepted: {terrain_metadata["width"]:,} x {terrain_metadata["height"]:,} pixels; {terrain_metadata["driver"]}; {terrain_metadata["source_crs"]}. Windowed terrain screening enabled.')
+    elif rules.terrain_required:raise ValueError('Terrain screening is required: supply a DEM raster under Data sources > Elevation Model (DEM).')
     s=Session(log,cancelled,rules.import_batch_size)
+    if terrain_metadata:s.metadata['terrain']=terrain_metadata
     try:
         s.ingest(paths,rules,mappings,source_options)
         if not s.count('land') or not s.count('water'):raise ValueError('Land and water polygon layers must be nonempty. Water screening cannot be skipped.')

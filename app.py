@@ -97,7 +97,7 @@ class App(tk.Tk):
         area=ttk.Frame(self.inputs);area.pack(fill='x')
         for i,(kind,filename) in enumerate(files.items()):
             v=tk.StringVar(value=str(ROOT/'data'/filename) if filename else '');self.paths[kind]=v
-            ttk.Label(area,text=kind.replace('_',' ').title(),width=15,wraplength=120).grid(row=i,column=0,sticky='w',pady=5)
+            ttk.Label(area,text='Elevation Model (DEM)' if kind=='terrain' else kind.replace('_',' ').title(),width=15,wraplength=120).grid(row=i,column=0,sticky='w',pady=5)
             ttk.Entry(area,textvariable=v).grid(row=i,column=1,sticky='ew',padx=6)
             ttk.Button(area,text='Browse file',command=lambda k=kind:self.browse(k)).grid(row=i,column=2)
             ttk.Button(area,text='Inspect / map',command=lambda k=kind:self.inspect(k)).grid(row=i,column=3,padx=4)
@@ -350,7 +350,8 @@ class App(tk.Tk):
 
     def browse(self,kind):
         if self.busy:return
-        path=filedialog.askopenfilename(filetypes=FILE_TYPES)
+        from dem_io import DEM_FILE_TYPES
+        path=filedialog.askopenfilename(filetypes=DEM_FILE_TYPES if kind=='terrain' else FILE_TYPES)
         if path:self.paths[kind].set(path);self.reset_source_profile(kind);self.inspect(kind)
 
     def inspect(self,kind):
@@ -365,11 +366,11 @@ class App(tk.Tk):
                     from building_stream import building_layers,building_chunks
                     from stream_io import source_layers,stream_source
                     if kind=='terrain':
-                        import rasterio
+                        from dem_io import inspect_dem
                         from gis_io import Dataset
                         import pandas as pd
-                        with rasterio.open(path) as dem:
-                            data=Dataset(pd.DataFrame([{'width':dem.width,'height':dem.height,'crs':str(dem.crs),'nodata':str(dem.nodata)}]),metadata={'driver':dem.driver,'source':path,'source_crs':str(dem.crs)})
+                        info=inspect_dem(path)
+                        data=Dataset(pd.DataFrame([info]),metadata=info)
                         self.messages.put(('source_layers',(kind,[{'name':'DEM raster'}],'DEM raster',data,{},[])));return
                     layers=building_layers(path) if kind=='buildings' else source_layers(path);names=[v['name'] for v in layers];selected=opt.get('layer')
                     if selected not in names:selected=names[0] if len(names)==1 else None
@@ -501,6 +502,9 @@ class App(tk.Tk):
     def worker(self,paths,rules,maps,output,options):
         result=None
         try:
+            from check_desktop_environment import check_environment
+            environment=check_environment()
+            self.messages.put(('log','Desktop environment ready: '+environment['python']+'; rasterio '+str(environment['versions']['rasterio'])))
             result=run_paths(paths,rules,maps,lambda s:self.messages.put(('log',s)),self.cancelled.is_set,source_options=options)
             if self.cancelled.is_set():raise InterruptedError('Planning cancelled. No results exported.')
             folder=save_plan(result,output,paths)

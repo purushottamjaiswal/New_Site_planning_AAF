@@ -1,3 +1,13 @@
+## Desktop environment and Elevation Model update
+
+Desktop only: run **Setup_Desktop_Environment.bat** to create or repair the complete `.venv`, including rasterio, then **Start_Planner.bat**. Startup checks rasterio and GeoTIFF support before planning. For a separately managed interpreter run `python -m pip install -r requirements.txt` and `python check_desktop_environment.py` in that same interpreter.
+
+Under **Data sources → Elevation Model (DEM)** select a numeric elevation GeoTIFF, GDAL-readable IMG, VRT, ASC, DEM, HGT, or a ZIP containing exactly one supported raster. Use **Inspect / map** to check driver, dimensions, embedded CRS, pixel size, NoData and elevation units. Terrain inputs must contain one band with elevations in metres; source scale/offset are applied. Raster reads use 3×3 windows. A selected DEM is screened even if **Require DEM terrain screening** is unchecked; that checkbox additionally prevents planning without a DEM. Set **Maximum DEM slope** according to engineering criteria. Invalid DEMs stop before large input ingestion.
+
+For the HDX *Nigeria - Elevation Model* shown in the screenshot, choose the downloaded `nga_dem.zip`, or extract and select its elevation raster. The screenshot states 90 m resolution and labels the resource GARMIN IMG: `.img` alone does not identify its actual format. A GDAL-readable numeric elevation IMG is supported; a Garmin map IMG is not. ZIPs with multiple rasters need extraction and a merged raster first. The actual HDX archive has not been supplied or verified. A 90 m DEM supports regional screening and does not certify compound-scale slope. DEM files remain external and are not copied into saved projects.
+
+This update does not change the QGIS plugin. Existing desktop exports must be regenerated to include the added DEM metadata.
+
 # New Site Planning v7.0
 
 This release fixes assignment grid IDs, actual-polygon demand checks and scenario reload. It adds explicit target/location/priority policies, settlement-guided alternatives, selection explanations, local alternative comparisons, interactive draft review, durable result projects, GeoPackage output, adaptive building reads, optional network-line proximity, DEM slope and imported validated RF footprints.

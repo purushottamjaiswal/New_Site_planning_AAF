@@ -1,15 +1,13 @@
 @echo off
 cd /d "%~dp0"
-if not exist ".venv\Scripts\python.exe" (
-  echo First install: creating the Python environment...
-  py -3 -m venv .venv
-  if errorlevel 1 goto failed
-)
-".venv\Scripts\python.exe" -c "import numpy,pandas,scipy,shapely,pyproj,pyogrio,ijson,rasterio" >nul 2>&1
-if errorlevel 1 (
-  ".venv\Scripts\python.exe" -m pip install -r requirements.txt
-  if errorlevel 1 goto failed
-)
+if not exist ".venv\Scripts\python.exe" goto setup
+".venv\Scripts\python.exe" check_desktop_environment.py >nul 2>&1
+if errorlevel 1 goto setup
+goto run
+:setup
+call Setup_Desktop_Environment.bat --no-pause
+if errorlevel 1 goto failed
+:run
 ".venv\Scripts\python.exe" app.py
 if errorlevel 1 goto failed
 exit /b 0

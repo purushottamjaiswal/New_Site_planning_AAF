@@ -1,5 +1,7 @@
 # New Site Planning v7.0
 
+Desktop Elevation Model update: run `Setup_Desktop_Environment.bat` to install/repair the complete local environment, including rasterio; use `Start_Planner.bat` to launch it. Under Data sources choose **Elevation Model (DEM)**. Desktop accepts a single-band numeric GeoTIFF, GDAL-readable IMG, VRT, ASC, DEM, HGT or ZIP containing exactly one such raster. Inspect it before planning; elevations must be in metres and the CRS must be embedded. See the desktop update at the top of README.md. These desktop changes do not update the QGIS plugin.
+
 ## Start and migrate
 
 Extract the new package into a new folder. On Windows, run `Start_Planner.bat`; this release adds rasterio for DEM support. Load a previous scenario if needed, inspect the selected sources/layers and save it again in the new scenario format. Run/export again to obtain the corrected assignments, explanations, GeoPackage, persistent project and review controls. Existing HTML exports are not upgraded in place.
