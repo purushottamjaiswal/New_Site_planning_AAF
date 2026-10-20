@@ -142,7 +142,7 @@ def candidate_sources(s,r):
         for _,g,_ in s.records('grids',"json_extract(payload,'$.target')=1",order='gid'):
             lat,lon=offset_coordinates(g['lat'],g['lon'],offsets[:,0],offsets[:,1])
             for y,x in zip(lat,lon):
-                index+=1;yield dict(source_candidate_id=f'SEARCH_{index:08d}',grid_id=g['id'],country=r.country.upper(),lat=float(y),lon=float(x),feasible='unknown',location_basis='Nominal-grid area search' if r.location_mode=='Area search' else 'Legacy grid centroid',location_source='Generated desktop search',survey_verified='No')
+                index+=1;yield dict(source_candidate_id=f'SEARCH_{index:08d}',grid_id=g['id'],country=r.country.upper(),lat=float(y),lon=float(x),feasible='unknown',location_basis='Nominal-grid area search' if r.location_mode=='Area search' else 'Quick demo grid centroid; approximate location' if r.location_mode=='Quick demo (grid centroid)' else 'Legacy grid centroid',location_source='Generated desktop search',survey_verified='No')
 
 
 def prepare_candidates(s,r,notes):
@@ -160,7 +160,7 @@ def prepare_candidates(s,r,notes):
     batch=[];processed=0
     for row in candidate_sources(s,r):
         s.check();processed+=1
-        if processed>r.max_candidate_points:raise ValueError('Candidate alternatives exceed configured limit; increase the limit or use a wider search spacing.')
+        if r.location_mode!='Quick demo (grid centroid)' and processed>r.max_candidate_points:raise ValueError('Candidate alternatives exceed configured limit; increase the limit or use a wider search spacing.')
         row['lat']=number(row['lat']);row['lon']=number(row['lon'])
         if not valid(row['lat'],row['lon']):s.issue('candidates',row,'Invalid candidate coordinates; excluded');continue
         accuracy_supplied=str(row.get('accuracy_m','')).strip()
@@ -235,7 +235,7 @@ def select_sites(s,r):
             s.db.execute('INSERT INTO selected_stats VALUES(?,?,?,?,?) ON CONFLICT(gid) DO UPDATE SET total=total+excluded.total,weighted_distance=weighted_distance+excluded.weighted_distance,count_sites=count_sites+1,ids=ids||\';\'||excluded.ids',(gid,dem,weighted,1,cid))
 
         result={key:row.get(key) for key in SITE_COLUMNS};result.update(rank=rank,candidate_id=cid,country=r.country,category=row['parent_category'],town=row['parent_town'],incremental_demand=total,weighted_benefit=value,assigned_grids=grid_count,assigned_points=point_count,
-            location_status='Input feasible candidate; RF and acquisition review required' if r.location_mode=='Supplied candidates' else 'Desktop search point; physical feasibility unknown',demand_basis='Mixed/coarse grid demand' if coarse else 'Supplied detailed demand points',demand_unit='people (radius opportunity, not predicted coverage)' if r.mode=='Population' else 'MR records (NOT population)',reason=f"{row['parent_category']} area; {point_count} incremental demand points")
+            location_status='Input feasible candidate; RF and acquisition review required' if r.location_mode=='Supplied candidates' else 'Quick demo only; approximate grid centroid, detailed planning required' if r.location_mode=='Quick demo (grid centroid)' else 'Desktop search point; physical feasibility unknown',demand_basis='Mixed/coarse grid demand' if coarse else 'Supplied detailed demand points',demand_unit='people (radius opportunity, not predicted coverage)' if r.mode=='Population' else 'MR records (NOT population)',reason=f"{row['parent_category']} area; {point_count} incremental demand points")
         s.add('sites',result);row['selected_candidate']=cid;s.update('candidates',rid,row)
         for other,_,dist,_ in s.spatial('candidates',row['lat'],row['lon'],r.min_new_km,'t.allowed=1'):
             if other==rid or dist<r.min_new_km or math.isclose(dist,r.min_new_km,abs_tol=1e-12):s.db.execute('UPDATE candidates SET allowed=0 WHERE rid=?',(other,))
@@ -257,7 +257,11 @@ def run_database(paths,rules,mappings=None,log=print,cancelled=lambda:False,sour
     try:
         s.ingest(paths,rules,mappings,source_options)
         if not s.count('land') or not s.count('water'):raise ValueError('Land and water polygon layers must be nonempty. Water screening cannot be skipped.')
-        prepare_references(s,rules);notes=[];prepare_grids_and_demand(s,rules,paths,notes)
+        prepare_references(s,rules);notes=[]
+        if rules.location_mode=='Quick demo (grid centroid)':
+            message='QUICK DEMO: location search OFF; one centroid per target grid. Approximate positions only; land/water and loaded feasibility checks remain active. Search alternative limit does not apply.'
+            notes.append(message);log(message)
+        prepare_grids_and_demand(s,rules,paths,notes)
         if s.buildings is not None:
             w,south,e,n=s.buildings.bounds;bounds=s.db.execute('SELECT min(lon),min(lat),max(lon),max(lat) FROM grids').fetchone()
             if e<bounds[0] or w>bounds[2] or n<bounds[1] or south>bounds[3]:raise ValueError('Building extent does not overlap the selected grid scope.')

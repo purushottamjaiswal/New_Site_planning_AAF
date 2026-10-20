@@ -1,3 +1,15 @@
+## v6.2: quick demo or detailed location planning
+
+In **Location search**, clear **Enable detailed location search (turn off for a quick demo)** for an initial demonstration. The planner evaluates one approximate centroid per eligible target grid, rather than expanding each grid into many alternatives. The search-alternatives cap is ignored in this mode, so an old setting of 100 cannot block a large demo. Set Maximum proposed sites under Planning rules to your desired upper target (for example 20,000).
+
+Check the option again for detailed planning. Your previous location method, spacing and alternatives cap are retained. Area search evaluates alternative coordinates; Supplied candidates uses your feasible candidate inventory. Fine spacing is not a survey accuracy guarantee.
+
+Demo results identify their coordinates as approximate in the run log, summary and site exports. Land/water screening, existing/new site separation, demand rules, and loaded exclusion/infrastructure/building checks still apply. A centroid falling in water is rejected; demo mode does not search for a replacement in that grid. If Rooftop search was selected, demo mode uses building context only and restores the rooftop setting when detailed mode is re-enabled. Optional large building files still take time to import when loaded; leave them blank for a simpler demo if building checks are unnecessary. Land and water polygons remain required.
+
+The target is a maximum, not a guaranteed number of sites. Inputs, intermediate candidates and results remain in temporary SQLite storage. This switch reduces location-search work; nationwide import and demand assignment still require processing time.
+
+CLI/Python: use `Rules(location_mode='Quick demo (grid centroid)', max_sites=20000)`. Use a non-rooftop building rule in this mode.
+
 # New Site Planning AAF — standalone desktop application
 
 Version 6.1. A local Python/Tkinter application for evaluating telecom site locations from Red/Amber coverage and speed grids, population or MR demand, existing Airtel sites, competitor context and building footprints. It runs outside QGIS.

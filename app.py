@@ -19,7 +19,7 @@ ROOT=Path(__file__).resolve().parent
 
 class App(tk.Tk):
     def __init__(self):
-        super().__init__();self.title('Airtel Africa | New Site Planning v6.1')
+        super().__init__();self.title('Airtel Africa | New Site Planning v6.2')
         width,height=initial_window_size(self.winfo_screenwidth(),self.winfo_screenheight())
         self.geometry(f'{width}x{height}+20+20');self.minsize(min(680,width),min(420,height));self.resizable(True,True)
         self.columnconfigure(0,weight=1);self.rowconfigure(1,weight=1);self.page_hosts={}
@@ -156,6 +156,11 @@ class App(tk.Tk):
     def build_location_rules(self):
         ttk.Label(self.location_tab,text='Choose where the planner may place a site',style='Title.TLabel').pack(anchor='w',pady=8)
         ttk.Label(self.location_tab,text='Supplied candidates gives selection from real input coordinates. Area search creates desktop alternatives and cannot establish land availability or survey accuracy.',wraplength=1080).pack(anchor='w',pady=(0,15))
+        self.location_search_enabled=tk.BooleanVar(value=True)
+        ttk.Checkbutton(self.location_tab,text='Enable detailed location search (turn off for a quick demo)',variable=self.location_search_enabled,command=self.update_location_search).pack(anchor='w',pady=6)
+        self.location_search_status=tk.StringVar()
+        ttk.Label(self.location_tab,textvariable=self.location_search_status,wraplength=1070).pack(anchor='w',pady=6)
+        self.location_search_widgets={}
         frame=ttk.LabelFrame(self.location_tab,text='Location and feasibility settings',padding=14);frame.pack(fill='x')
         settings=[('location_mode','Location method',['Area search','Supplied candidates','Grid centroid (legacy)']),
           ('search_spacing_m','Area-search spacing (m)',None),('distance_decay','Distance-decay strength (0–10)',None),
@@ -167,8 +172,16 @@ class App(tk.Tk):
             ttk.Label(frame,text=label).grid(row=i,column=0,sticky='w',pady=7,padx=(0,20))
             widget=ttk.Combobox(frame,textvariable=v,values=options,width=33,state='readonly') if options else ttk.Entry(frame,textvariable=v,width=35)
             widget.grid(row=i,column=1,sticky='ew',pady=7)
+            self.location_search_widgets[key]=widget
+        self.update_location_search()
         ttk.Label(self.location_tab,text='Limits of 0 disable the corresponding infrastructure check. An enabled limit requires matching reference data. No-build CSV buffers are always enforced when loaded. Candidate feasibility must explicitly be Yes. Candidate suitability (0–1) adjusts the location score. All distances are recomputed at each alternative coordinate.',wraplength=1070,justify='left').pack(anchor='w',pady=15)
         ttk.Label(self.location_tab,text='For more accurate siting: prepare feasible candidate coordinates from your tower/land/rooftop inventory, exclude water/protected land in GIS, and supply fine demand points. Terrain propagation, antenna design, road/fiber routing and field surveys are not performed by this CSV-based tool.',wraplength=1070,justify='left').pack(anchor='w',pady=8)
+
+    def update_location_search(self):
+        enabled=self.location_search_enabled.get()
+        for key in ('location_mode','search_spacing_m','max_candidate_points'):
+            self.location_search_widgets[key].configure(state=('readonly' if key=='location_mode' else 'normal') if enabled else 'disabled')
+        self.location_search_status.set('Detailed planning: evaluate alternative locations using the selected method.' if enabled else 'QUICK DEMO: one approximate centroid per target grid; search limit ignored. Land/water and loaded checks remain active. Rooftop search becomes building context only. Detailed settings are retained when switched back on.')
 
     def build_building_ui(self):
         ttk.Label(self.building_tab,text='Open building evidence and map review',style='Title.TLabel').pack(anchor='w',pady=8)
@@ -275,7 +288,10 @@ class App(tk.Tk):
         defaults=Rules()
         for field in fields(Rules):
             name=field.name;v=self.values[name].get();default=getattr(defaults,name)
+            if not self.location_search_enabled.get() and name in ('location_mode','search_spacing_m','max_candidate_points'):
+                v='Quick demo (grid centroid)' if name=='location_mode' else str(default)
             kw[name]=bool(v) if isinstance(default,bool) else int(v) if isinstance(default,int) else float(v) if isinstance(default,float) else str(v).strip()
+        if not self.location_search_enabled.get() and kw['building_rule']=='Rooftop search':kw['building_rule']='Context only'
         result=Rules(**kw);result.country=result.country.upper();result.validate();return result
 
     def build_source_profiles(self):

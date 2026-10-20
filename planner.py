@@ -81,7 +81,7 @@ class Rules:
 
     def validate(self):
         if self.building_storage not in ('Disk index','Regional memory'):raise ValueError('Choose Disk index or Regional memory for building storage.')
-        if self.building_rule=='Rooftop search' and self.location_mode=='Grid centroid (legacy)':raise ValueError('Rooftop search requires Area search or Supplied candidates location mode.')
+        if self.building_rule=='Rooftop search' and self.location_mode in ('Grid centroid (legacy)','Quick demo (grid centroid)'):raise ValueError('Rooftop search requires Area search or Supplied candidates location mode.')
         if self.building_rule not in ('Ground clearance','Context only','Rooftop search'):
             raise ValueError('Choose a valid building rule.')
         for name in ('building_clearance_m','building_context_radius_m','building_density_boost','min_roof_area_m2'):
@@ -90,7 +90,7 @@ class Rules:
         if not 1<=self.building_context_radius_m<=5000:raise ValueError('Building context radius must be 1–5000 m.')
         if not math.isfinite(self.building_min_confidence) or not 0<=self.building_min_confidence<=1:raise ValueError('Building confidence must be 0–1.')
         from siting import MODES
-        if self.location_mode not in MODES:raise ValueError('Choose Area search, Supplied candidates or Grid centroid (legacy).')
+        if self.location_mode not in MODES:raise ValueError('Choose Area search, Supplied candidates, Quick demo (grid centroid) or Grid centroid (legacy).')
         if not math.isfinite(self.search_spacing_m) or not 100<=self.search_spacing_m<=3000:
             raise ValueError('Search spacing must be between 100 and 3000 metres. It is not an accuracy claim.')
         if not isinstance(self.max_candidate_points,int) or self.max_candidate_points<1:raise ValueError('Maximum candidate alternatives must be a positive integer.')

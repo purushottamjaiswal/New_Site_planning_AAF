@@ -1,3 +1,7 @@
+## v6.2 quick demo validation
+
+All 76 automated tests passed on Linux. Regression checks cover one candidate per target grid, bypassing a candidate limit of 1 in demo mode, enforcing the limit again in detailed mode, continued rejection of water centroids, approximate-location metadata, agreement with the reference planner, and restoring detailed UI settings after toggling. UI rule extraction is tested with Tcl variables without a display; the new checkbox has not been interactively verified on Windows.
+
 # Validation for version 6.1
 
 - **73 automated tests passed**, including missing/empty/non-polygon water evidence, ocean and coastline rejection, lagoon/river boundary exclusion, island holes, nominal 1 km/3 km dimensions, complete grid GeoJSON and identical live endpoint geometry.

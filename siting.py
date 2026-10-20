@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
 
-MODES=('Area search','Supplied candidates','Grid centroid (legacy)')
+MODES=('Area search','Supplied candidates','Grid centroid (legacy)','Quick demo (grid centroid)')
 
 def offset_coordinates(lat,lon,east_m,north_m):
     """Spherical direct solution; offsets have local bearing atan2(east,north)."""
@@ -21,6 +21,7 @@ def select_locations(g,target,source,blockers,competitors,rules,reject,notes,log
     from planner import numeric,valid_coords,validate_ids,xyz,chord,km_from_chord,nearest,SITE_COLUMNS
     if rules.building_rule=='Rooftop search' and buildings is None:raise ValueError('Rooftop search requires building footprints.')
     if rules.location_mode not in MODES:raise ValueError('Unknown location mode.')
+    if rules.location_mode=='Quick demo (grid centroid)':notes.append('QUICK DEMO: one centroid per target grid; no location search. Approximate coordinates require detailed planning and survey. Search alternative limit does not apply.')
     eligible=g.loc[target].copy()
     side=1000 if rules.grid_size=='1km' else 3000
     # Demand is represented by measured small-area points when supplied. Never add
@@ -98,7 +99,7 @@ def select_locations(g,target,source,blockers,competitors,rules,reject,notes,log
             offsets=np.array([(e,north) for e in offsets for north in offsets]+[(0.,0.)])
             offsets=np.unique(offsets,axis=0);repeat=len(offsets)
         else:offsets=np.array([[0.,0.]])
-        if len(eligible)*repeat>rules.max_candidate_points:
+        if rules.location_mode!='Quick demo (grid centroid)' and len(eligible)*repeat>rules.max_candidate_points:
             raise ValueError(f'Search generates {len(eligible)*repeat:,} alternatives, above limit {rules.max_candidate_points:,}. Increase search spacing, reduce scope or supply feasible candidates.')
         base=eligible.loc[eligible.index.repeat(repeat)].reset_index(drop=True)
         offsets=np.tile(offsets,(len(eligible),1))
@@ -106,9 +107,9 @@ def select_locations(g,target,source,blockers,competitors,rules,reject,notes,log
         cand=pd.DataFrame({'source_candidate_id':[f'SEARCH_{i+1:08d}' for i in range(len(base))],
           'grid_id':base.id,'country':rules.country,'lat':lat,'lon':lon,'feasible':'unknown',
           'suitability':1.,'survey_verified':'No','accuracy_m':np.nan,'location_source':'Generated desktop search',
-          'location_basis':('Nominal-grid area search' if rules.location_mode=='Area search' else 'Legacy grid centroid'),
+          'location_basis':('Nominal-grid area search' if rules.location_mode=='Area search' else 'Quick demo grid centroid; approximate location' if rules.location_mode=='Quick demo (grid centroid)' else 'Legacy grid centroid'),
           'rejection':''})
-    if len(cand)>rules.max_candidate_points:raise ValueError('Candidate count exceeds maximum candidate points.')
+    if rules.location_mode!='Quick demo (grid centroid)' and len(cand)>rules.max_candidate_points:raise ValueError('Candidate count exceeds maximum candidate points.')
     cand=cand.reset_index(drop=True)
     parent_lookup=g.set_index('id')
     cand['parent_grid_index']=cand.grid_id.map(parent_lookup['_index'])
@@ -213,7 +214,7 @@ def select_locations(g,target,source,blockers,competitors,rules,reject,notes,log
            'nearest_competitor_id','nearest_competitor_operator','nearest_competitor_period','nearest_road_km',
            'nearest_backhaul_km','nearest_power_km','location_basis','location_source','survey_verified','accuracy_m',
            'offset_from_grid_centroid_m','source_candidate_id','suitability','mapped_buildings_within_radius','mapped_footprint_area_m2','nearest_mapped_building_m','containing_building_id','containing_building_area_m2','building_factor','building_context']},
-          'location_status':('Input feasible candidate; RF and acquisition review required' if rules.location_mode=='Supplied candidates' else 'Desktop search point; physical feasibility unknown'),
+          'location_status':('Input feasible candidate; RF and acquisition review required' if rules.location_mode=='Supplied candidates' else 'Quick demo only; approximate grid centroid, detailed planning required' if rules.location_mode=='Quick demo (grid centroid)' else 'Desktop search point; physical feasibility unknown'),
           'demand_basis':('Mixed/coarse grid demand' if (demand.iloc[fresh].basis=='Coarse grid demand at centroid').any() else 'Supplied detailed demand points'),
           'demand_unit':('people (radius opportunity, not predicted coverage)' if rules.mode=='Population' else 'MR records (NOT population)'),
           'reason':f'{row.parent_category} area; {parent.coverage or "unknown"} coverage; {parent.speed or "unknown"} speed; {len(fresh)} incremental demand points'})
